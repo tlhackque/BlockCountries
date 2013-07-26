@@ -1,0 +1,1441 @@
+#!/usr/bin/perl
+#
+# BlockCountries     Block IP traffic from specified countries
+#
+# chkconfig: 2345 10 92
+# description:  Blocks IP traffic from IP addresses assigned to specific countries
+#
+
+use strict;
+use warnings;
+
+# Version 2.0
+#
+# Copyright (c) 2010,2012 Timothe Litt, litt__at__acm_dot_org
+#  All rights reserved.
+#
+# This software is licensed under the terms of the Perl
+# Artistic License (see http://dev.perl.org/licenses/artistic.html).
+#
+# This is free software - it works for me, and it may (or may not)
+# work for you.  No warranty or support is provided.
+#
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+# THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+# Except as contained in this notice, the name of the author shall not be
+# used in advertising or otherwise to promote the sale, use or other dealings
+# in this Software without prior written authorization from the author.
+#
+# Consider carefully whether you want to use this software
+# and the full consequences to your site and/or business.
+#
+# This is written as a technical means to assist in implementing
+# your policy.  The author expressly disclaims any responsibility
+# for the consequences of using this software.
+#
+# The above copyright notice, cautions and this permission notice shall
+# be included in all copies or substantial portions of the Software.
+
+### Block all traffic from specified countries. ###
+#
+# See Usage() for documentation
+#
+
+# List of country codes - specify yours in the config file
+
+my @DEFAULT_ISO = qw /cn kr kp kz ru/;
+
+# Local configuration.
+
+my $CFGFILE = '/etc/sysconfig/BlockCountries';
+my $ZONEDIR = '/root/blockips';
+
+my $LOGPFX = '[Blocked CC]: ';
+my $LOG = '/var/log/messages*';  # Note: This is a wildcard to handle log rotation.  .gz files will decompressed on the fly and processed.
+my $LOGPGM = 'kernel';
+
+my %config = ( # Parameters that can vary between IPV4 and IPV6
+	      4 => {
+		    IPT => '$path/iptables', # $path can be changed from config file with -path
+		    IPTR => '$path/iptables-restore',
+		    IHOOK => 'INPUT-HOOK',   # Note: if this table is not found, INPUT will be used
+		    OHOOK => 'OUTPUT-HOOK',  # Note: if this table is not found, OUTPUT will be used
+		    FHOOK => 'FORWARD-HOOK', # Note: if this table is not found, FORWARD will be used
+		   },
+	      6 => {
+		    IPT => '$path/ip6tables',
+		    IPTR => '$path/ip6tables-restore',
+		    IHOOK => 'INPUT-HOOK',   # Note: if this table is not found, INPUT will be used
+		    OHOOK => 'OUTPUT-HOOK',  # Note: if this table is not found, OUTPUT will be used
+		    FHOOK => 'FORWARD-HOOK', # Note: if this table is not found, FORWARD will be used
+		   },
+	      );
+# ### End of configuration
+
+my %RIRS = ( # Should be stable; http: URIs would be prefered for IF_MODIFIED support
+	    arin => 'ftp://ftp.arin.net/pub/stats/arin/delegated-arin-latest',
+	    ripe => 'ftp://ftp.ripe.net/ripe/stats/delegated-ripencc-latest',
+	    afrinic => 'ftp://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-latest',
+	    apnic => 'ftp://ftp.apnic.net/pub/stats/apnic/delegated-apnic-latest',
+	    lacnic => 'ftp://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-latest',
+	   );
+
+# The following are either part of base perl, or available on CPAN
+# Commented-out modules are used, but not read until a command requires them.
+
+use File::Basename;
+use File::Path;
+#use IO::Uncompress::Gunzip;
+use Locale::Country;
+#use LWP::Simple;
+use Net::IP;
+use NetAddr::IP qw(:lower);
+#use Net::Domain;
+#use Parse::Syslog;
+#use POSIX;
+use Regexp::IPv6 qw( $IPv6_re );
+use Socket qw( :addrinfo SOCK_RAW );
+use Storable qw( lock_store lock_retrieve );
+use Text::ParseWords;
+
+# Changelog (Also update revision above!)
+# 1.0       Initial development
+# 1.1       Add support for hook tables
+# 1.2       By unpopular demand, add -permitonly
+#           Add logging rate limit
+#           Add -dip (deny IP)
+# 1.3       Add output filtering (-blockout)
+# 1.4       Output filters need to match on destination port.
+#           Separate output port overrides as trojans like to ride on well-known ports
+# 1.5       Consolidate redundant code in parser, put config file arguments BEFORE command line.
+#           E.g. start -nolog now overrides config file -log.
+#           Update help.
+# 2.0       Obtain data directly from registries, support IPV6, inline short chains, more branching, optimize rule deletion.
+#           Remove need for iptables file.  Store country data in binary.
+#           N.B. If your are running an older version of Perl, you may need to update Socket from cpan.
+
+
+
+my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
+
+umask 0137;
+
+my $prog = basename $0;
+
+# Command is never in config file
+
+my $cmd = shift;
+
+if( -e $CFGFILE ) {
+    open( my $fh, '<', $CFGFILE ) or die( "Can't open $CFGFILE:$!" );
+    my @cfg;
+    while( <$fh> ) {
+	s/\s*#.*$//;
+	s/^\s+//;
+	s/\s+$//;
+	next unless length;
+	push @cfg, parse_line( '\s+', 0, $_ );
+    }
+    # Prepend config file arguments (so command line overrides if conflict)
+    unshift @ARGV, @cfg;
+    close $fh;
+}
+
+
+# Collect all arguments here, even though they are mostly for start
+# This allows detailed status
+
+my( $debug, $verbose, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules, $ipv4, $ipv6, $path,
+    @loglimits, @atports, @auports, @atportso, @auportso, @aips, @dips );
+
+$path = '/sbin';
+
+@loglimits = ( '1/minute', 10 );
+
+# Parse port number or name
+
+sub gport {
+    my $arg = shift;
+    my $prot = shift;
+    return $arg if( $arg =~  /^\d+$/ );
+
+    my $val = getservbyname( $arg, $prot );
+    return $val if( defined $val );
+
+    print "Invalid $prot port $arg\n";
+    exit 1;
+}
+
+# Parse ip address, ip subnet, or hostname
+
+sub gip {
+    my $arg = shift;
+
+    if( $arg =~ m,^(?:$IPv4_re|$IPv6_re)(?:/\d+)?$, ) {
+	return NetAddr::IP->new( $arg );
+    }
+
+    # Try hostname - supports both IPv4 and IPv6
+
+    my ( $err, @res ) = getaddrinfo( $arg, "", { socktype => SOCK_RAW } );
+    if( $err ) {
+	print "Unrecognized $arg: $err\n";
+	exit 1;
+    }
+
+    # Turn list of binary addresses back to (numeric) text.
+
+    my @ips;
+
+    while( my $ai = shift @res ) {
+	my ( $err, $ipaddr ) = getnameinfo( $ai->{addr}, NI_NUMERICHOST, NIx_NOSERV );
+	if( $err ) {
+	    print "Unrecognized $arg: $err\n";
+	    exit 1;
+	}
+	push @ips, NetAddr::IP->new( $ipaddr );
+    }
+
+    return @ips;
+}
+
+# Loop over $ARGV
+
+while( (my $arg = shift) ) {
+    if( $arg =~ /^-/ ) {
+	if( $arg eq '-blockout' ) {
+	    $outrules = 1;
+	    next;
+	}
+	if( $arg eq '-d' ) {
+	    $debug = 1;
+	    next;
+	}
+	if( $arg eq '-limit' && $ARGV[0] ) {
+	    unless( $ARGV[0] =~ m#(\d+/(?:second|minute|hour|day))(?::(\d+))?# ) {
+		print "Syntax error in -limit $ARGV[0]\n";
+		exit 1;
+	    }
+	    shift;
+	    $loglimits[0] = $1;
+	    $loglimits[1] = $2 if( defined $2 );
+	    next;
+	}
+	if( $arg eq '-nolimit' ) {
+	    @loglimits = ();
+	    next;
+	}
+	if( $arg eq '-log' ) {
+	    $log = 1;
+	    next;
+	}
+	if( $arg eq '-nolog' ) {
+	    $log = 0;
+	    next;
+	}
+	if( $arg eq '-permitonly' ) {
+	    $permitonly = 1;
+	    next;
+	}
+	if( $arg eq '-update' ) {
+	    $update = 1;
+	    next;
+	}
+	if( $arg eq '-v' ) {
+	    $verbose = 1;
+	    next;
+	}
+	if( $arg eq '-days' && $ARGV[0] && $ARGV[0] =~ /^\d+$/ ){
+	    $days = shift;
+	    next;
+	}
+	if( $arg eq '-host' && $ARGV[0] ){
+	    $host = shift;
+	    next;
+	}
+	if( $arg eq '-path' && $ARGV[0] ){
+	    $path = shift;
+	    next;
+	}
+	if( $arg eq '-atport' && $ARGV[0] ){
+	    push @atports, gport( shift, 'tcp' );
+	    next;
+	}
+	if( $arg eq '-auport' && $ARGV[0] ){
+	    push @auports, gport( shift, 'udp' );
+	    next;
+	}
+	if( $arg eq '-atporto' && $ARGV[0] ){
+	    push @atportso, gport( shift, 'tcp' );
+	    next;
+	}
+	if( $arg eq '-auporto' && $ARGV[0] ){
+	    push @auportso, gport( shift, 'udp' );
+	    next;
+	}
+	if( $arg eq '-aip' && $ARGV[0] ) {
+	    push @aips, gip( shift );
+	    next;
+	}
+	if( $arg eq '-dip' && $ARGV[0] ) {
+	    push @dips, gip( shift );
+	    next;
+	}
+	if( $arg eq '-ipv4' || $arg eq '-4' ) {
+	    $ipv4 = 1;
+	    next;
+	}
+	if( $arg eq '-noipv4' || $arg eq '-no4' ) {
+	    $ipv4 = 0;
+	    next;
+	}
+	if( $arg eq '-ipv6' || $arg eq '-6' ) {
+	    $ipv6 = 1;
+	    next;
+	}
+	if( $arg eq '-noipv6' || $arg eq '-no6' ) {
+	    $ipv6 = 0;
+	    next;
+	}
+	if( $arg eq '-h' || $arg eq '--help' ) {
+	    Usage();
+	    exit 0;
+	}
+	print "Unknown switch $arg";
+	print ' ', $ARGV[0] if( defined $ARGV[0] );
+	print "\n";
+	exit 1;
+    }
+    if( defined code2country( $arg ) ) {
+	$iso{lc $arg} = 1;
+    } else {
+	my $cc = country2code( $arg );
+	if( defined $cc ) {
+	    $iso{lc $cc} = 1;
+	} else {
+	    print "Unrecognized country/country code: $arg\n";
+	    exit 1;
+	}
+    }
+}
+
+if( !defined $ipv4 && !defined $ipv6 ) {
+    $ipv4 = 1;
+}
+
+foreach my $ipv (qw(4 6 )) {
+    foreach my $key (qw(IPT IPTR)) {
+	$config{$ipv}{$key} =~ s/\$path/$path/g;
+    }
+}
+
+# Merge configuration with iptables state
+
+my %IP = (
+	  4 => {
+		VERSION => 4,
+		ENABLED => $ipv4,
+		%{$config{4}},
+	       },
+	  6 => {
+		VERSION => 6,
+		ENABLED => $ipv6,
+		%{$config{6}},
+	       },
+	 );
+{
+    for my $v (keys %IP) {
+	my $ipv = $IP{$v};
+	#                New         Old        Default
+	my @chains = ( 'BLOCKCC0', 'BLOCKCC1' );
+
+	open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( print( $ipv->{IPT} . ": $!\n" ), return undef );
+
+	my( $i, $o, $f ) = ( $ipv->{IHOOK}, $ipv->{OHOOK}, $ipv->{FHOOK}, );
+	my $HOOK = qr/^($i|$o|$f|INPUT|OUTPUT|FORWARD)$/;
+	my $chain;
+
+	while( <$ipt> ) {
+	    my $line = $_;
+	    if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) {
+		$chain = $1;
+		if( $chain =~ $HOOK ) {
+		    if( $chain eq $i ) {
+			$ipv->{ihookvalid} = 1;
+		    } elsif( $chain eq $o ) {
+			$ipv->{ohookvalid} = 1;
+		    } elsif( $chain eq $f ) {
+			$ipv->{fhookvalid} = 1;
+		    }
+		}
+	    } elsif( $line =~ /^(BLOCKCC0-[^\s]+)\s/ ) {
+		die "Bad table format at $.\n" unless( defined $chain );
+		if( $chain =~ $HOOK ) {
+		    @chains = ( 'BLOCKCC1', 'BLOCKCC0' ); # CC0 is active, make 1 new
+		}
+	    }
+	}
+	close $ipt;
+	$ipv->{IHOOK} = 'INPUT' unless( $ipv->{ihookvalid} );
+	$ipv->{OHOOK} = 'OUTPUT' unless( $ipv->{ohookvalid} );
+	$ipv->{FHOOK} = 'FORWARD' unless( $ipv->{fhookvalid} );
+	$ipv->{NEWCHAIN} = $chains[0];
+	$ipv->{OLDCHAIN} = $chains[1];
+    }
+}
+
+@iso = sort keys %iso;
+@iso = @DEFAULT_ISO unless( @iso );
+
+# Primary chains to generate (I is input, O is output; forward shares output)
+
+my @genlist = $outrules? qw/I O/ : 'I';
+
+sub Usage {
+    print << "HELP";
+IP filter manager for country filters
+
+Usage: $prog command args
+  status [-v]        Display filter status.
+                     -v provides configuration from config file
+                     and command file - NOT iptables.
+  list               List available country names/codes.
+                     Contacts server for list.
+  intercepts [-host name] [-days n]
+                     List today\'s intercepts by host from $LOG.
+                     Requires -log to start.  
+  stop  args         Stop filtering
+  restart  args      Synonym for start (reloads with no open window)
+  condrestart args   Restarts only if already running
+  start args         Starts filter
+
+Start uses tables of IP blocks assigned to country codes that are
+stored in $ZONEDIR, which will be created if necessary.  The country
+files are binary, and are only created for country codes that are
+filtered.  The data is obtained from the Regional Internet Registries
+when absent, or when start -update is specified.
+
+iptables filters are generated and installed by start.  The filters are
+optimized and generally will not look identical to the input data.  However
+they will match the same address (no more and no fewer.)
+
+Arguments for start-class commands are:
+ -update            Get latest IP allocation data from regional registries.
+                    Otherwise, only gets data if no local file exists for a registry.
+ -4 -ipv4           Install filter for IPv4 addresses \ Default is -4 override with -no4 -no6
+ -6 -ipv6           Install filter for IPv6 addresses / For both, use -4 -6
+ -log               Install a logging rule to log rejected packets.
+ -nolog             Don\'t install a logging rule. (default)
+ -nolimit           Do not limit logging (can generate huge log files if under attack; not advised)
+ -limit spec        Limit logging, default = $loglimits[0]:$loglimits[1] (see man iptables "limit")
+ -atport n          Allow connections to TCP port n even FROM banned addresses.
+                    May specify any number of times.  May use a service name.
+ -auport n          Allow connections to UDP port n even FROM banned addresses.
+                    May specify any number of times.  May use a service name.
+ -atporto n         Same as -atport, but for connections TO banned addresses.
+ -auporto n         Same as -auport, but for connections TO banned addresses.
+ -aip ip(\/mask)    Allow connection from an otherwise banned IP address.
+                    For a block, specify a netlength or mask. A hostname may
+                    also be specified.  May specify any number of times.
+ -dip ip(\/mask)    Deny connections from an otherwise allowed IP address.
+                    Same syntax as -aip.
+ -path /sbin        Path for iptables utilities (use in $CFGFILE)
+ -permitonly        Listed countries will be permited, all others denied.
+ -blockout          Also generate rules to block output & forwarded-output.
+                    This is probably not required for most applications, and
+                    will roughly double the memory requirements.
+		    Caution: If you use -blockout for start, you must also use it for stop.
+                    This will not be a problem if it\'s in the config file. 
+ -d                 Output random debugging messages
+ -v                 Output extended status/statistics
+  CC                ISO Country code or name to ban (or permit if -permitonly).
+                    Specify as many as you like.
+                    Default list: 
+HELP
+    for my $cc (sort @DEFAULT_ISO ) {
+	print "                      $cc - ", code2country($cc), "\n";
+    }
+my $IPT4 = $IP{4}{IPT};
+my $IPT6 = $IP{6}{IPT};
+
+    print << "HELP";
+
+Arguments may also be obtained from $CFGFILE. 
+Anything (except comments) contained in it is prepended to every command 
+line\'s arguments.
+
+Use single or double-quoted strings for country names containining spaces.
+
+This script is designed to run as a service; chkconfig will link it into
+/etc/rcn.d/.
+
+This script should also be run with start -update from a cron job - weekly
+is suggested - to obtain the latest IP address databases.  If the CRONJOB
+environment variable is set, only errors and zone updates will be reported.
+This is recomended to minimize e-mail from cron.
+
+To prevent communications from banned IP addresses during updates, 
+start will install new rules before removing active rules.  For
+this to be effective, you should not stop the service.
+
+The status -v command will report the current configuration, although the
+actual implementation in iptables will be different due to optimizations.
+
+To view the actual iptables configuration, use
+    $IPT4 -nvL --line-number | less for IPV4 or
+    $IPT6 -nvL --line-number | less for IPV6
+
+start -v will provide some statistics for the optimizations and generated rules.
+
+The intercepts command will parse $LOG and summarize intercepts by IP address.
+It will break down the dropped packets by protocol(s) and port(s).  Of course,
+logging must be on for this to work.  -days specifys how many days back
+(from the current time) to read.  -host specifies the hostname to match.
+Default -days is 1, hostname is current host.
+
+Credits:
+ Some ideas came from http://www.cyberciti.biz/faq/block-entier-country-using-iptables/.
+
+ This version of the script merges all the IP address blocks; this saves over 1,000 
+ rules for the default banned address list.  It\'s also somewhat faster than a shell
+ script, and contains a more complete and polished user and system interface.  It is
+ not a complete superset; at this time it does not implement file archiving (better
+ left to your backup solution) nor does it implement interface selection (better done
+ with your own firewall rules and placement of the *-HOOK chains.)
+
+Issues:
+ Consider carefully whether you want to use this software and the full consequences
+ to your site and\/or business.  By necessity, it will block potential customers and
+ 'good' connections along with villains.  You must consider the costs and benefits
+ to your operation - the author does not endorse any specific policy.  In particular,
+ the defaults should be viewed as examples, not value judgements.
+
+ Very large numbers of exception IP blocks might benefit from implementing a subchain
+ structure - but that would be a rather different use model.  The known use cases
+ would probably be penalized - so one would want to make a dynamic choice.  I\'d
+ want to see actual data before implementing this.
+
+ The iptables-restore format is undocumented, though used by others.  It may be
+ fragile.
+
+ This code should use IPTables::IPv4 - but it doesn\'t currently work on my x64 system.
+ It may be re-written to do so at some point.
+
+ --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012
+HELP
+}
+
+# Success and failure return true and false, and
+# print boot-compatible strings (color and aligned
+# to column 60 if on a terminal)
+# CHA (...G)
+# SGR codes used (...m)
+# 0 = default; 1 = bold; 31 = green, 32 = red; 1 = bold; 39 = "default" (boot requires)
+
+sub success {
+    return 1 if( $ENV{CRONJOB} );
+
+    if( -t STDOUT ) {
+	print "\033[60G[\033[1;32m OK \033[0;39m]\n";
+    } else {
+	print " [ OK ]\n";
+    }
+    return 1;
+}
+
+sub failure {
+    return 0 if( $ENV{CRONJOB} );
+
+    if( -t STDOUT ) {
+	print "\033[60G[\033[1;31m FAILED \033[0;39m]\n";
+    } else {
+	print " [ FAILED ]\n";
+    }
+    return 0;
+}
+
+sub running {
+    my %run;
+
+    foreach my $ipv (values %IP) {
+	next unless( $ipv->{ENABLED} );
+
+	open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( print( $ipv->{IPT} . ": $!\n" ), return undef );
+
+	my( $i, $o, $f ) = ( $ipv->{IHOOK}, $ipv->{OHOOK}, $ipv->{FHOOK}, );
+	my %txt = (
+		   $i => 'Input',
+		   $o => 'Output',
+		   $f => 'Forwarding',
+		  );
+
+	my $HOOK = qr/^($i|$o|$f)$/;
+	my $CHAIN = $ipv->{OLDCHAIN};
+	my $chain;
+
+	while( <$ipt> ) {
+	    my $line = $_;
+	    if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) {
+		$chain = $1;
+	    } elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) {
+		die "Bad table format at $.\n" unless( defined $chain );
+		if( $chain =~ $HOOK ) {
+		    $run{$ipv->{VERSION}}{$txt{$1}} = 1;
+		}
+	    }
+	}
+	close $ipt;
+    }
+
+    if( $ipv4 && $ipv6 ) {
+	return keys %{$run{4}} && keys %{$run{6}} &&
+	       "IPV4(" .join( ", ", sort keys %{$run{4}}) . ") & IPV6(" .
+		        join( ", ", sort keys %{$run{6}}) . ")";
+    } elsif( $ipv4 ) {
+	return keys %{$run{4}} && "IPV4(" .join( ", ", sort keys %{$run{4}}) . ")";
+    }
+    return  keys %{$run{6}} && "IPV6(" . join( ", ", sort keys %{$run{6}}) . ")";
+}
+
+sub pport {
+    my $p = shift;
+    my @p = @_;
+
+    printf "  %5u", $p;
+    if( @p ) {
+	print " $p[0]";
+	if( length $p[1] ) {
+	    print " (", join( '/', split( ' ', $p[1] ) ), ")";
+	}
+    }
+    print "\n";
+}
+
+sub status {
+    if( (my $r = running) ) {
+	print "Blocked countries $r filter is running";
+	if( $verbose ) {
+	    printf " and configured to %s:\n", ($permitonly? 'permit only' : 'block');
+	    for my $cc (sort @iso ) {
+		print " $cc - ", code2country($cc), "\n";
+	    }
+	    if( (my $n = @atports + @auports + @atportso + @auportso + @aips + @dips) ) {
+		printf "However, the following exception%s:\n", ($n == 1)? ' exists' : 's exist';
+		if( @atports ) {
+		    printf " TCP port%s permitted (input):\n", ((@atports == 1)? '' : 's');
+		    for my $p (@atports) {
+			pport( $p,  getservbyport($p, 'tcp') );
+		    }
+		}
+		if( @atportso ) {
+		    printf " TCP port%s permitted (output):\n", ((@atportso == 1)? '' : 's');
+		    for my $p (@atportso) {
+			pport( $p,  getservbyport($p, 'tcp') );
+		    }
+		}
+		if( @auports ) {
+		    printf " UDP port%s permitted (input):\n", ((@auports == 1)? '' : 's');
+		    for my $p (@auports) {
+			pport( $p, getservbyport($p, 'udp') );
+		    }
+		}
+		if( @auportso ) {
+		    printf " UDP port%s permitted (output):\n", ((@auportso == 1)? '' : 's');
+		    for my $p (@auportso) {
+			pport( $p, getservbyport($p, 'udp') );
+		    }
+		}
+		if( @aips ) {
+		    printf " IP %s permitted:\n", ((@aips == 1)? 'address/network' : 'addresses/networks');
+		    for my $ip (@aips) {
+			printf "    $ip\n";
+		    }
+		}
+		if( @dips ) {
+		    printf " IP %s blocked:\n", ((@dips == 1)? 'address/network' : 'addresses/networks');
+		    for my $ip (@dips) {
+			printf "    $ip\n";
+		    }
+		}
+	    }
+	} else {
+	    print "\n";
+	}
+	return 1;
+    }
+    print "Blocked countries IP filter is stopped\n";
+    return 0;
+}
+
+sub list {
+    open( my $lh, '<', "$ZONEDIR/cclist.txt" ) or ( print( "Can't open index: $!\n" ), return 0 );
+    my %ccs;
+    while( <$lh> ) {
+	chomp;
+	$ccs{$_} = 1;
+    }
+    close $lh;
+
+    print "Recognized country codes:\n";
+
+    for my $cc (sort keys %ccs) {
+	my $cn = code2country($cc);
+	next unless( defined $cn ); # There seem to be some undocumented zones
+	printf " $cc - %s\n", $cn
+    }
+    return 1;
+}
+
+sub startUpdate( $ ) {
+    my $ipv = shift;
+
+    my $iptr = $ipv->{IPTR};
+    $iptr = "tee /dev/fd/2 | $iptr" if( $debug );
+
+    open( my $fh, '|-', $iptr . " -n" ) or ( print( $iptr . ": $!\n"), return undef );
+    print $fh "*filter\n";
+
+    return $fh;
+}
+
+sub commitUpdate( $ ) {
+    my $fh = shift;
+
+    print $fh "COMMIT\n";
+    close $fh or die "Delete rules failed: $?\n";
+
+    return 1;
+}
+
+sub defchain( $\%$;$ ) {
+    my $fh = shift;
+    my $declared = shift;
+    my $chain = shift;
+    my $remove = shift;
+
+    return if( $declared->{$chain} );
+
+    # Chains must be declared (even if we're deleting them)
+    # Syntax differs for built-in chains.
+
+    if( $chain =~ /^(INPUT|OUTPUT|FORWARD)$/ ) {
+	print $fh ":$chain ACCEPT [0:0]\n";
+    } else {
+	print $fh ":$chain - [0:0]\n"
+    }
+    $declared->{$chain} = ($remove? 2 : 1);
+}
+
+# Delete all our rules from a chain
+
+sub deleterules( $\%$$)  {
+    my $ipv = shift;
+    my $declared = shift;
+    my $MAIN = shift;
+    my $fh = shift;
+
+    my $chain;
+
+    open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( die $ipv->{IPT} . ": $!\n" );
+
+    my( $i, $o, $f ) = ( $ipv->{IHOOK}, $ipv->{OHOOK}, $ipv->{FHOOK}, );
+    my $HOOK = qr/^(?:$i|$o|$f)$/;
+    my $CHAIN = $ipv->{$MAIN};
+
+    while( <$ipt> ) {
+	my $line = $_;
+	if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) {
+	    $chain = $1;
+	    if( $chain =~ /^$CHAIN-/ ) { # A (sub)chain of ours, flush contents, queue deletion
+		defchain( $fh, %$declared, $chain, 1 );
+		print $fh "-F $chain\n";
+	    }
+	} elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) {
+	    die "Bad table format at $.\n" unless( defined $chain );
+	    my $target = $1;
+	    if( $chain =~ $HOOK ) { # Remove rule in hook that calls our chain
+		# Must not defchain a hook as it will (mysteriously) empty it,
+		# causing -D to fail (and other chains using the hook to be lost as well.)
+		print $fh "-D $chain -j $target\n";
+	    }
+	}
+    }
+    close $ipt;
+
+    # All our chains are empty and the hook rule is gone.
+    # It's now legal to delete the (sub)chain since refcounts are zero
+
+    foreach my $chain (keys %$declared ) {
+	if( $declared->{$chain} == 2 ) {
+	    print $fh "-X $chain\n";
+	    delete $declared->{$chain}; # Allow redeclaration
+	}
+    }
+}
+
+# Sort function for IP addresses for installation into filter chains
+# The whole chain must be processed if we miss, so there's nothing we can do.
+# But on a hit, we can improve the expected time somewhat by checking the
+# largest blocks first.  This corresponds to the smallest mask length.
+# It is possible to do better if the traffic pattern is known, but there
+# isn't a good way (short of active feedback) to determine it.
+# In any case, we reduce the search length by hashing on the first
+# octet of the address, so this is a secondary effect.
+
+sub ipcmp {
+    my $x = $a->version <=> $b->version;
+    return $x if( $x );
+    $x = $a->masklen <=> $b->masklen;
+    return $x if( $x );
+    return $a <=> $b;
+}
+
+# Start command
+
+sub start {
+    print "Starting blocked countries IP filter: " unless( $ENV{CRONJOB} );
+
+    File::Path::make_path( $ZONEDIR, { mode => 0771 } ) unless( -d $ZONEDIR );
+
+    # Local subnets - external firewalls prevent them from showing up here, but
+    # a bogus zone file could do damage.
+    unshift @aips, NetAddr::IP->new( '192.168.0.0/16' ), NetAddr::IP->new( '172.16.0.0/12' ), NetAddr::IP->new( '10.0.0.0/8' );
+
+    # Optimize  IP lists
+    @aips = sort ipcmp NetAddr::IP::Compact( @aips );
+    @dips = sort ipcmp NetAddr::IP::Compact( @dips );
+
+    # Make sure we have a data file from each registry
+    # Generate a new one if -update or we don't have one
+    # If we fetch, only transfer the file if it's different from (usu. newer than) our copy.
+
+    # Make sure we have RIR data, refresh it if needed
+
+    my $newdata;
+    for my $rir (keys %RIRS) {
+	my $db = "$ZONEDIR/$rir.rdb";
+
+	# Fetch if updating or have no data from RIR
+
+	next unless( $update || ! -f $db || -z $db );
+
+	require LWP::Simple;
+	LWP::Simple->import;
+
+	print "\nChecking $rir for new data" if( $debug );
+	my $rc = mirror( $RIRS{$rir}, $db );
+	if( is_success( $rc ) ) {
+
+	    print "\nUpdated IP zone data from $rir", if( $debug || $update || $ENV{CRONJOB} );
+	    # Shouldn't ever get an empty file, but may as well check
+	    unless( -f $db && -s $db ) {
+		print "\nUpdated zone data from $rir is empty!";
+		unlink $db;
+		return failure;
+	    }
+	    $newdata = 1;
+	} else {
+	    if( $rc == RC_NOT_MODIFIED() ) { # Can only happen if file exists
+		print "\nNo new IP data available from $rir " if( $debug || ($update && !$ENV{CRONJOB}) );
+	    } else {
+		print "\nUnable to fetch IP zone data from $rir: $rc - ", status_message($rc), " ";
+	    }
+	    next;
+	}
+	unless( -f $db && -s $db ) {
+	    # No data - don't replace current country files or filter
+	    print "\nNo IP zone data available from $rir ";
+	    if( $debug ) {
+		next;
+	    }
+	    return failure;
+	}
+    }
+
+    # new data from any registry invalidates all saved country data
+
+    if( $newdata ) {
+	foreach my $cdb (glob "$ZONEDIR/*.cdb") {
+	    unlink $cdb;
+	}
+    }
+
+    # Only extract data from RIRS if at least one RIR has new data or we don't have
+    # country data cached for a CC we're using
+    # The data for a given country code can come from more than one RIR (!), so if
+    # one changes, we have to (re)process all the RIRs.
+
+    my %ccneeded = map { my $cdb = -f "$ZONEDIR/$_.cdb"; $newdata ||= !$cdb; ($_ => !$cdb) } @iso;
+    my %ccavail;
+    my %cips;
+    if( $newdata ) {
+	for my $rir (keys %RIRS) {
+	    my $db = "$ZONEDIR/$rir.rdb";
+
+	    # Extract data into country files
+
+	    my $rirfile;
+	    open( $rirfile, "<", $db ) or ( print( "\nCan't open $db: $! " ), return failure );
+	    my( $n, $r4, $r6 ) = (0) x 3;
+	    my( $version, $reg, $serial, $records, $startdate, $enddate, $utc );
+	    while( <$rirfile> ) {
+		next if( /^\s*#/ );
+		next if( /^\s*$/ );
+
+		chomp;
+
+		unless( defined $version ) {
+		    ( $version, $reg, $serial, $records, $startdate, $enddate, $utc ) = split( m/\|/, $_, 7 );
+		    unless( $version == 2 ) {
+			print "\nUnknown version $version for $db";
+			return failure;
+		    }
+		    next;
+		}
+		# Summary lines are "registry | * | type | count |'summary'
+		# types are asn, ipv4, ipv6
+
+		my( $registry, $cc, $type, $start, $value, $date, $status, $extensions ) = split( m/\|/, $_, 8 );
+
+		next unless( $type =~ /^ipv[46]$/ && $cc ne '*' );
+
+		$cc =~ /^(\w\w)$/ && $value > 0 or ( print( "\nInvalid record $_ in $db at line $. "), next );
+		$cc = lc $1;
+		$ccavail{$cc} = 1;
+		next unless( $ccneeded{$cc} );
+
+		if( $type eq 'ipv4' ) {
+		    my $ip = Net::IP->new( "$start + " . ($value-1) );
+		    my @prefixes = $ip->find_prefixes;
+
+		    foreach my $pfx (@prefixes) {
+			push @{$cips{$cc}{4}}, NetAddr::IP->new( $pfx );
+			$r4++;
+		    }
+		} else {
+		    push @{$cips{$cc}{6}}, NetAddr::IP->new( "$start/$value" );
+		    $r6++;
+		}
+		$n++;
+	    }
+	    print "\nExtracted ", $r4+$r6, " ranges ($r4 IPV4, $r6 IPV6) from $n records from $db " if( $debug );
+	}
+
+	# Index of all country codes (for LIST, so the RIR files don't need to be scanned.)
+
+	open( my $idx, '>', "$ZONEDIR/cclist.txt" ) or ( print( "Can't open index: $!\n" ), return 0 );
+	for my $cc (sort keys %ccavail) {
+	    print $idx "$cc\n";
+	}
+	close $idx;
+
+	# Compress each CC's data & save as a binary file
+
+	for my $cc (keys %cips) {
+	    for my $ipv (keys %{$cips{$cc}}) {
+		my $inc = @{$cips{$cc}{$ipv}};
+		$cips{$cc}{$ipv} = [ NetAddr::IP::Compact(@{$cips{$cc}{$ipv}}) ];
+		if( $verbose && $inc ) {
+		    my $outc = @{$cips{$cc}{$ipv}};
+		    print "\nExtracted $inc IPV$ipv ranges", ($inc == $outc? '' : "; compressed to $outc"), " for $cc ";
+		}
+	    }
+	    lock_store( $cips{$cc}, "$ZONEDIR/$cc.cdb" ) or ( print( "\nUnable to write $ZONEDIR/$cc.cdb: $! "), return failure );
+	    print "\nWrote $ZONEDIR/$cc.cdb" if( $debug );
+	}
+    }
+
+    # Get any CC IP data that didn't just come from the RIR from stored files.
+
+    for my $c (@iso) {
+	my $db = "$ZONEDIR/$c.cdb";
+	my $cn = code2country( $c );
+	$cn = " ($cn)" if( defined $cn );
+
+	unless( -f $db && -s $db ) {
+	    # No data - don't replace current filter
+	    $cn ||= '';
+	    print "\nNo IP zone data available for $c$cn ";
+	    if( $debug ) {
+		next;
+	    }
+	    return failure;
+	}
+	unless( $cips{$c} ) {
+	    $cips{$c} = lock_retrieve( $db );
+	    unless( $cips{$c} ) {
+		print "\nUnable to read $db: $!\n";
+		return failure;
+	    }
+	    print "\nRead $ZONEDIR/$c.cdb" if( $debug );
+	}
+    }
+
+    # Generate the tables for each protocol
+
+    for my $ipv (values %IP) {
+	next unless( $ipv->{ENABLED} );
+
+	my $IPT = $ipv->{IPT};
+	my $version = $ipv->{VERSION};
+	my $NEWCHAIN = $ipv->{NEWCHAIN};
+
+	my @addresses;
+
+	# Addresses from each country
+
+	foreach my $cc (@iso) {
+	    push @addresses, @{$cips{$cc}{$ipv->{VERSION}}} if( defined $cips{$cc}{$version} );
+	    delete $cips{$cc}{$version};
+	}
+
+	# Compact the blocks into the minimal covering set
+	my $inaddrs = @addresses;
+
+	next unless( $inaddrs );
+
+	@addresses = sort ipcmp NetAddr::IP::Compact(@addresses);
+
+
+	# Generate iptables-restore data
+
+	my $fh = startUpdate( $ipv ) or return failure;
+	my %declared;
+
+	# Delete any lingering references / parts of new chain
+
+	deleterules( $ipv, %declared, 'NEWCHAIN', $fh );
+
+
+	# (Log & ) drop chains
+
+	defchain( $fh, %declared, "${NEWCHAIN}-DLOG" );
+
+	if( $log ) {
+	    # Note that we can not provide a per-country log prefix due to compaction.
+	    # However, the intercepts report will map IPs back to their (alleged) country of origin
+	    # To determine what countries are causing intercepts, the logs must be post-processed to
+	    # lookup each IP.
+	    my $limits = '';
+	    $limits = "-m limit --limit $loglimits[0] --limit-burst $loglimits[1] " if( @loglimits );
+	    print $fh "-A ${NEWCHAIN}-DLOG $limits-j LOG --log-prefix \"$LOGPFX\"\n";
+	}
+	print $fh "-A ${NEWCHAIN}-DLOG -j DROP\n";
+
+	my( $exceptions, $xrules ) = (0,0);
+	foreach my $pchain ( @genlist ) {
+	    defchain( $fh, %declared, "${NEWCHAIN}-${pchain}" );
+	    print $fh "-A ${NEWCHAIN}-$pchain -m state --state RELATED,ESTABLISHED -j RETURN\n";
+
+	    # List any allowed ports - first since they have a netmask of 0
+
+	    # Allowed TCP ports - no more than 15 per rule (limit of multiport)
+
+	    $exceptions += @aips + @dips;
+
+	    my @ports = ($pchain eq 'I')? @atports : @atportso;
+	    $exceptions += @ports;
+	    while( @ports ) {
+		my $n = @ports;
+		$n = 15 if( $n > 15 );
+                print $fh "-A ${NEWCHAIN}-$pchain -p tcp -m multiport --dports " . join( ',', @ports[0..$n-1] ) . " -j RETURN\n";
+		splice( @ports, 0, $n );
+		$xrules++;
+	    }
+
+	    # Allowed UDP ports
+
+	    @ports = ($pchain eq 'I')? @auports : @auportso;
+	    $exceptions += @ports;
+
+	    while( @ports ) {
+		my $n = @ports;
+		$n = 15 if( $n > 15 );
+		print $fh "-A ${NEWCHAIN}-$pchain -p udp -m multiport --dports " . join( ',', @ports[0..$n-1] ) . " -j RETURN\n";
+		splice( @ports, 0, $n );
+		$xrules++;
+	    }
+
+	    # Allowed IPs (with optional masklen/netmask); largest size first
+	    #
+
+	    my $match = ($pchain eq 'I' ? 's' : 'd');
+
+	    my @ips = @aips;
+	    while( @ips ) {
+		my $ip = shift @ips;
+		next unless( $ip->version == $ipv->{VERSION} );
+		$xrules++;
+		print $fh "-A ${NEWCHAIN}-$pchain -$match $ip -j RETURN\n";
+	    }
+
+	    # Explicitly blocked IPs
+
+	    @ips = @dips;
+	    while( @ips ) {
+		my $ip = shift @ips;
+		next unless( $ip->version == $ipv->{VERSION} );
+		$xrules++;
+		print $fh "-A ${NEWCHAIN}-$pchain -$match $ip -j ${NEWCHAIN}-DLOG\n";
+	    }
+
+
+	    my %subchains;
+
+	    # Note: Do not include hook table declaration as this will clear it
+	    # If we're hooking a system table, the declaration is required.
+	    # Hook tables are guaranteed to exist because we checked earlier
+
+	    my $hook = $ipv->{$pchain.'HOOK'};
+	    defchain( $fh, %declared, $hook, 0 ) if( $hook =~ /^(?:INPUT|OUTPUT|FORWARD)$/ );
+	    my $mrules = 0;
+
+	    foreach my $ipblock (@addresses) {
+		my $v = $ipblock->version;
+		next unless( $v == $ipv->{VERSION} );
+
+		my $subchain;
+		if( $v == 4 ) {
+		    ($subchain) = ($ipblock =~ /^(\d+)\./);
+		    unless( $subchains{$subchain} ) {
+			$subchains{$subchain}{define} = 
+			  "-A ${NEWCHAIN}-${pchain} -$match ${subchain}.0.0.0/8 -g ${NEWCHAIN}-${pchain}-${subchain}\n";  # Chain - branch on 1st octet to subchain
+		    }
+		} else {
+		    my $pfx = $ipblock->masklen;
+		    if( $pfx < 24 ) {
+			# This net is bigger than our subchains, so a subchain won't work.
+			# We could split the net, but that isn't worthwhile, as all paths
+			# lead to the same result and it costs memory.  So no subchains in those cases.
+			if( $permitonly ) {
+			    print $fh "-A ${NEWCHAIN}-${pchain} -$match $ipblock -j RETURN\n";
+			} else {
+			    print $fh "-A ${NEWCHAIN}-${pchain} -$match $ipblock -j ${NEWCHAIN}-DLOG\n";
+			}
+			$mrules++;
+			next;
+		    }
+		    my $ipb = $ipblock->full;
+		    ($subchain) = ($ipb =~ /^([[:xdigit:]]{4}:[[:xdigit:]]{2})[[:xdigit:]]{2}:/);
+		    unless( $subchains{$subchain} ) {
+			my $submask = $subchain;
+			$submask =~ m/:([[:xdigit:]]+)$/;
+			$submask .= '0' x (4-length($1)); # Left-justify mask
+			$subchains{$subchain}{define} =
+		          "-A ${NEWCHAIN}-${pchain} -$match ${submask}::0/24 -g ${NEWCHAIN}-${pchain}-${subchain}\n";  # Chain - branch on 1st 32 bits to subchain
+		    }
+		}
+		$subchains{$subchain}{length}++;
+		push @{$subchains{$subchain}{blocks}}, $ipblock;
+	    }
+
+	    # Evaluate the subchains, and inline any that turned out to be length 1
+# move the inlined chains to the end?
+
+	    my $kidchains = 0;
+	    my $inlined = 0;
+	    foreach my $subchain (keys %subchains) {
+		if( $subchains{$subchain}{length} == 1 ) {
+		    # Inline this subchain, as it is less expensive than the small chain
+		    print $fh "-A ${NEWCHAIN}-${pchain} -$match " . (@{$subchains{$subchain}{blocks}})[0] . " -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n");
+		    $inlined++;
+		    $mrules++;
+		    next;
+		}
+		# Either for data or dispatch to child chains (or both), we need this subchain
+
+		defchain( $fh, %declared, "${NEWCHAIN}-${pchain}-$subchain", 0 );
+		print $fh $subchains{$subchain}{define};
+
+		if( $subchains{$subchain}{length} > 50 ) { # Empirical threshold.
+		    if( $ipv->{VERSION} == 4 ) {
+			my %kids;
+			my @subips = @{$subchains{$subchain}{blocks}};
+			$subchains{$subchain}{blocks} = [];
+			$subchains{$subchain}{length} -= @subips;
+			while( my $ipblock = shift @subips ) {
+			    if( $ipblock->masklen < 16 ) { # Too big for a child chain
+				push @{$subchains{$subchain}{blocks}}, $ipblock;
+				$subchains{$subchain}{length}++;
+				next;
+			    }
+			    my( $kid ) = ($ipblock =~ /^\d+\.(\d+)\./);
+			    push @{$kids{$kid}}, $ipblock;
+			}
+			# Evaluate the child chains.  Inline short ones by pushing them back on the subchain.
+			foreach my $kid (keys %kids) {
+			    if( @{$kids{$kid}} == 1 ) {
+				push @{$subchains{$subchain}{blocks}}, (@{$kids{$kid}})[0];
+				$subchains{$subchain}{length}++;
+				$kids{$kid} = [];
+				next;
+			    }
+			    defchain( $fh, %declared, "${NEWCHAIN}-${pchain}-${subchain}-${kid}", 0 );
+			    print $fh "-A ${NEWCHAIN}-${pchain}-${subchain} -$match ${subchain}.${kid}.0.0/16 -g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n";
+			    $subchains{$subchain}{length}++;
+			    foreach my $ipblock (@{$kids{$kid}}) {
+				print $fh "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n");
+			    }
+			    if( $permitonly ) {
+				print $fh "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -j ${NEWCHAIN}-DLOG\n";
+			    }
+			    $kidchains++;
+			}
+			$subchains{$subchain}{blocks} = [ sort ipcmp @{$subchains{$subchain}{blocks}} ];
+		    } else {
+			my %kids;
+			my @subips = @{$subchains{$subchain}{blocks}};
+			$subchains{$subchain}{blocks} = [];
+			$subchains{$subchain}{length} -= @subips;
+			while( my $ipblock = shift @subips ) { # 24 sub + 16 child?
+			    if( $ipblock->masklen < 40 ) { # Too big for a child chain
+				push @{$subchains{$subchain}{blocks}}, $ipblock;
+				$subchains{$subchain}{length}++;
+				next;
+			    }
+			    my( $kid ) = ($ipblock->full =~ /^[[:xdigit:]]{4}:[[:xdigit:]]{2}([[:xdigit:]]{2}:[[:xdigit:]]{2})[[:xdigit:]]{2}:/);
+			    push @{$kids{$kid}}, $ipblock;
+			}
+			# Evaluate the child chains.  Inline short ones by pushing them back on the subchain.
+			foreach my $kid (keys %kids) {
+			    if( @{$kids{$kid}} == 1 ) {
+				push @{$subchains{$subchain}{blocks}}, (@{$kids{$kid}})[0];
+				$subchains{$subchain}{length}++;
+				$kids{$kid} = [];
+				next;
+			    }
+			    defchain( $fh, %declared, "${NEWCHAIN}-${pchain}-${subchain}-${kid}", 0 );
+			    my $submask = "${subchain}${kid}";
+			    $submask =~ tr/://d;
+			    $submask .= '0' x (4-(length($submask) % 4)) if( length($submask) %4 ); # Left-justify mask
+			    $submask =~ s/([[:xdigit:]]{4})/$1:/g;
+			    print $fh "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $submask:0/40 -g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n";
+			    $subchains{$subchain}{length}++;
+			    foreach my $ipblock (@{$kids{$kid}}) {
+				print $fh "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n");
+			    }
+			    if( $permitonly ) {
+				print $fh "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -j ${NEWCHAIN}-DLOG\n";
+			    }
+			    $kidchains++;
+			}
+			$subchains{$subchain}{blocks} = [ sort ipcmp @{$subchains{$subchain}{blocks}} ];
+		    }
+		}
+
+		foreach my $ipblock (@{$subchains{$subchain}{blocks}}) {
+		    print $fh "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n");
+		}
+		if( $permitonly ) {
+		    print $fh "-A ${NEWCHAIN}-${pchain}-${subchain} -j ${NEWCHAIN}-DLOG\n";
+		}
+	    }
+
+	    if( $verbose && $pchain eq 'I' ) {
+		# Statistics are identical for each chain
+		my( $minlen, $maxlen );
+		for my $s (map { $_->{length} } values %subchains) {
+		    $minlen = $s if( !defined $minlen || $s < $minlen );
+		    $maxlen = $s if( !defined $maxlen || $s > $maxlen );
+		}
+		print( "\n",
+		       $inaddrs . ($permitonly? ' permitted' : ' blocked') . " IPV" . $ipv->{VERSION} . " address ranges generated ",
+		       (scalar @addresses), " rules, using ",
+		       (scalar keys %subchains), " sub-chains.  Savings: ",
+		       ($inaddrs - scalar @addresses), " rules (", 
+		       sprintf( "%.2f", 100*(1- ((scalar @addresses))/$inaddrs)), "%).\nMinimum chain length: $minlen",
+		       ", Maximum: $maxlen, Inlined: $inlined; Split: $kidchains; Primary rules: $mrules\n" );
+	    }
+
+	    # Link hook'd chain to new chain
+	    print $fh "-I $hook -j ${NEWCHAIN}-${pchain}\n";
+
+	    # Forward shares chain with output
+	    print $fh "-I " . $ipv->{'FHOOK'} . " -j ${NEWCHAIN}-${pchain}\n" if( $pchain eq 'O' );
+	}
+
+	if( $verbose ) {
+	    # Provide some statistics, mostly for debugging.
+
+	    # Exception statistics
+	    print( "\n",
+		   "$exceptions exceptions generated $xrules rules." );
+	}
+
+	# Remove old rules
+	deleterules( $ipv, %declared, 'OLDCHAIN', $fh );
+
+	commitUpdate( $fh );
+
+	$ipv->{OLDCHAIN} = $ipv->{NEWCHAIN};
+    }
+
+    return success if( running );
+
+    return failure;
+}
+
+sub stop {
+    return 1 if( !running );
+
+    print "Removing blocked countries IP filter";
+
+    for my $ipv (values %IP) {
+	next unless( $ipv->{ENABLED} );
+
+	my $fh = startUpdate( $ipv ) or return failure;
+	my %declared;
+
+	deleterules( $ipv, %declared, 'OLDCHAIN', $fh );
+
+	commitUpdate( $fh );
+    }
+
+    if( !running ) {
+	success;
+	return 1;
+    }
+    failure;
+    return 0;
+}
+
+sub restart {
+    # Don't stop since start will keep the current table alive until
+    # the new one is active.
+    return start();
+}
+
+# List intercepted IPs for today
+# This can be run in a cron job just before midnight to get a list of
+# IPs to report.  Or, you can use -days n to get the last n days worth
+# of intercepts
+# Only works if logging is on
+
+sub intercepts {
+    my( $fh, %ips );
+
+    require IO::Uncompress::Gunzip;
+    require Net::Domain;
+    require Parse::Syslog;
+
+    $days ||= 1;
+
+    my $start = time() - ( $days * 24*60*60 );
+    $host ||= Net::Domain::hostname();
+
+    foreach my $logfile (glob $LOG) {
+	my $lh = IO::Uncompress::Gunzip->new( $logfile, MultiStream => 1, Transparent => 1 );
+	unless( $lh ) {
+	    print "Skipping system log file: $IO::Uncompress::Gunzip::GunzipError\n";
+	    my $x = $IO::Uncompress::Gunzip::GunzipError; # 2nd use (because we require rather than use)
+	    next;
+	}
+	my $sl = Parse::Syslog->new( $lh, arrayref => 1 );
+
+	# Record # intercepts for each ip => protocol => port
+
+	while( my $l = $sl->next ) {
+	    next if( $l->[0] < $start );
+	    next unless $l->[2] eq $LOGPGM && $l->[1] =~ /$host/i;
+	    # [timestamp] [logprefix]                               $2 = ipv4, $3-6 = ipv4 octects
+	    if( $l->[4] =~ /^(?:\[[\d.]+\]\s+)?\Q$LOGPFX\E.*?\bSRC=($IPv4_re|$IPv6_re).*?\bPROTO=(ICMP(?:v?6)?)\b.*?\bTYPE=(\d+)/ ) {
+		$ips{NetAddr::IP->new($1)->addr}{lc $7}{$8}++;
+	    } elsif( $l->[4] =~ /^(?:\[[\d.]+\]\s+)?\Q$LOGPFX\E.*?\bSRC=($IPv4_re|$IPv6_re).*?\bPROTO=(\w+).*?\bDPT=(\d+)/ ) {
+		$ips{NetAddr::IP->new($1)->addr}{lc $7}{$8}++;
+	    }
+	}
+
+	close $lh;
+    }
+
+    return 0 unless %ips;
+
+    # List each intercepted IP, its country, the protocols, ports and number of packets for each
+
+    print "Intercepts by host IP:\n";
+
+    my( %ccip, %ccn );
+    foreach (glob "$ZONEDIR/*.cdb") {
+	m,$ZONEDIR/(.*).cdb$,;
+	my $cc = $1;
+
+	$ccip{$cc} = lock_retrieve( $_ );
+	unless( $ccip{$cc} ) {
+	    print "\nUnable to read $_: $!\n";
+	    return 0;
+	}
+	print "\nRead $_" if( $debug );
+    }
+
+    for my $ip (sort ipcmp map {NetAddr::IP->new($_)} keys %ips) {
+	my $ccn;
+      CCSEARCH:
+	foreach my $cc (keys %ccip) {
+	    my $cips = $ccip{$cc}{$ip->version};
+	    foreach my $cip (@$cips) {
+		if( $cip->contains($ip) ) {
+		    print "$cc: ";
+		    $ccn = $cc;
+		    last CCSEARCH;
+		}
+	    }
+	}
+	unless( $ccn ) {  # Old log entries from country no longer blocked, or have a -dip from an unblocked country
+	    $ccn = '??';
+	    print '??: ';
+	}
+	print(  ($ip->version == 6? $ip->short : $ip->addr) );
+	my @plist = sort keys %{$ips{$ip->addr}}; # Protocol
+	for my $p (@plist) {
+	    my @rlist = sort keys %{$ips{$ip->addr}{$p}}; # Ports
+	    print ' ', join( ' ', map { my $n = $ips{$ip->addr}{$p}{$_}; $ccn{$ccn} += $n; "$p-$_($n)" } @rlist );
+	}
+	print "\n";
+    }
+
+    print "Intercepts by country:\n";
+    for my $cc (sort {$ccn{$b} <=> $ccn{$a} } keys %ccn) {
+	my $cn = code2country($cc);
+	if( defined $cn ) {
+	    $cn = "$cc ($cn)";
+	} else {
+	    $cn = $cc;
+	}
+	printf "%10u %s\n", $ccn{$cc}, $cn;
+    }
+    return 1;
+}
+
+if( $cmd eq 'start' ) {
+    exit !start();
+}
+if( $cmd eq 'stop' ) {
+    exit !stop();
+}
+if( $cmd eq 'restart' ) {
+    exit !restart();
+}
+if( $cmd eq 'condrestart' ) {
+    exit !(running && restart());
+}
+if( $cmd eq 'status' ) {
+    exit !status();
+}
+if( $cmd eq 'list' ) {
+    exit !list();
+}
+if( $cmd eq 'intercepts' ) {
+    exit !intercepts();
+}
+if( $cmd eq 'help' ) {
+    Usage();
+    exit;
+}
+print "Usage: $prog (start|stop|restart|condrestart|status|list|intercepts|help)\n";
+exit 1;

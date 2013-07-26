@@ -1,0 +1,30 @@
+Copyright (c) 2010,2012 Timothe Litt, litt__at__acm_dot_org
+ All rights reserved.
+
+This software is licensed under the terms of the Perl
+Artistic License (see http://dev.perl.org/licenses/artistic.html).
+
+This is free software - it works for me, and it may (or may not)
+work for you.  No warranty or support is provided.
+
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+ Except as contained in this notice, the name of the author shall not be
+ used in advertising or otherwise to promote the sale, use or other dealings
+ in this Software without prior written authorization from the author.
+
+Consider carefully whether you want to use this software
+and the full consequences to your site and/or business.
+
+This is written as a technical means to assist in implementing
+your policy.  The author expressly disclaims any responsibility
+for the consequences of using this software.
+
+The above copyright notice, cautions and this permission notice shall
+be included in all copies or substantial portions of the Software.
+
