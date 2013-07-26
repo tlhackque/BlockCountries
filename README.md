@@ -143,8 +143,6 @@ BlockCountries -start -update
 
 The filter should download the latest IP country assignments and be in place.
 
-````
-
 
 #Usage:
 
