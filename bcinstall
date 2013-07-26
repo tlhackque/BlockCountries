@@ -1,0 +1,35 @@
+#!/bin/bash
+
+if ! which perl > /dev/null 2>&1 ; then
+    echo "You need to install perl"
+    exit 1
+fi
+
+function needs {
+    m="$1"
+    if ! perl -m"$m" -e'exit;' >/dev/null 2>&1 ; then
+        echo "You need to install the perl module $m"
+        echo "Fetch it from your distribution or from cpan"
+        exit 1
+    fi
+    return 0
+}
+
+needs File::Basename
+needs File::Path
+needs IO::Uncompress::Gunzip
+needs Locale::Country
+needs LWP::Simple
+needs Net::IP
+needs NetAddr::IP
+needs Net::Domain
+needs Parse::Syslog
+needs POSIX
+needs Regexp::IPv6
+needs Socket
+needs Storable
+needs Text::ParseWords
+
+echo "All needed perl modules are installed"
+
+exit 0
