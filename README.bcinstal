@@ -1,0 +1,28 @@
+bcinstall is an installation aid for BlockCountries.
+
+
+This script will determine if perl is installed on your system 
+and will determine  whether all the required library modules are installed.
+
+Simply download the script, make it executable, and run it. 
+(No parameters are required.)
+
+If it says -Y´All needed perl modules are installed¡, block countries
+should run (assuming that iptables is installed.)
+
+If it says that you need to install perl, it should be packaged for your 
+distribution (apt-get, yum, etc.) If you can’t find a current perl version
+for your distribution (which would be very, very surprising)  you can find
+it at http://www.perl.org.
+
+If it says that you need to install a perl module, here is how to do this:
+
+Some distributions provide many of the modules under yum, apt-get, etc. 
+
+If yours doesn’t  or doesn’t have one that this needs, use cpan. 
+There should be a cpan command installed with Perl. Just say cpan to the 
+shell, then install modulename (like IO::Uncompress::Gunzip) and it should
+just work. ‘quit’ exits cpan.
+
+Install the module, then run bcinstall again. Repeat until bcinstall reports
+that you have all the needed modules.
