@@ -70,6 +70,18 @@ subchain structure is.
 Copy BlockCountries to /etc/init.d (or your distributions startup method)
 run chkconfig to include it in the autostart.
 
+If Perl is not installed in /usr/bin, change the first line from
+````
+#!/usr/bin/perl
+
+to the location of your perl interpreter
+On Unix-like systems, 
+
+which perl
+
+will usually reveal the location.  The #! is required.
+````
+
 Inspect the first few lines and modify these variables for your environment:
 
 ````
