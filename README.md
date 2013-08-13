@@ -36,7 +36,10 @@ It is a Perl script.
 #Dependencies:
 The script uses the following Perl library modules, available
 from CPAN (or in the base Perl distribution).  Those preceeded
-by # are only used if a particular command requires them.
+by # are only used if a particular command requires them.  
+
+If you are unfamiliar with Perl, you may want to use the bcinstall
+bash script, which will determine whether they (and Perl) are installed.
 
 ````
 File::Basename
@@ -67,6 +70,10 @@ The IPv6 optimizations have not been tuned; it is not clear what the right
 subchain structure is.
 
 #Installation:
+
+You may want to run bcinstall (see its README) to check for Perl and its
+dependencies.
+
 Copy BlockCountries to /etc/init.d (or your distributions startup method)
 run chkconfig to include it in the autostart.
 
