@@ -9,7 +9,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.1';
+my $VERSION = '2.2';
 
 # Copyright (c) 2010,2012 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -1040,7 +1040,7 @@ sub start {
 	my( $exceptions, $xrules ) = (0,0);
 	foreach my $pchain ( @genlist ) {
 	    defchain( $fh, %declared, "${NEWCHAIN}-${pchain}" );
-	    print $fh "-A ${NEWCHAIN}-$pchain -m state --state RELATED,ESTABLISHED -j RETURN\n";
+	    print $fh "-A ${NEWCHAIN}-$pchain -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n";
 
 	    # List any allowed ports - first since they have a netmask of 0
 
