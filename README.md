@@ -39,9 +39,8 @@ V2.1 Support new statistics file used by registries
 V2.2 Support conntrack instead of state
 
 V2.3 Make conntrack optional - older netfilters are still around
-     Use -conntrack if you see warnings (or errors)
-     Add -passive to use passive FTP connection when getting
-     registry data.  This usually traverses firewalls more easily.
+* Use -conntrack if you see warnings (or errors)
+* Add -passive to use passive FTP connection when getting registry data.  This usually traverses firewalls more easily.
 
 #Dependencies:
 The script uses the following Perl library modules, available
