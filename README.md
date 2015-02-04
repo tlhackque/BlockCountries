@@ -3,7 +3,7 @@ BlockCountries
 
 iptables manager to block by country
 
-Copyright (C) 2010, 2012, 2013 Timothe Litt
+Copyright (C) 2010, 2012, 2013, 2015 Timothe Litt
 
 BlockCountries generates iptables and ipv6tables 
 that allow blocking IP traffic based on the country
@@ -32,6 +32,14 @@ some simple reports of the intercepts by host IP, showing the
 country, protocols, ports and number of attempts.
 
 It is a Perl script.
+
+#Latest updates:
+V2.1 Support new statistics file used by registries
+V2.2 Support conntrack instead of state
+V2.3 Make conntrack optional - older netfilters are still around
+     Use -conntrack if you see warnings (or errors)
+     Add -passive to use passive FTP connection when getting
+     registry data.  This usually traverses firewalls more easily.
 
 #Dependencies:
 The script uses the following Perl library modules, available
@@ -200,6 +208,7 @@ Arguments for start-class commands are:
                     Otherwise, only gets data if no local file exists for a registry.
  -4 -ipv4           Install filter for IPv4 addresses \ Default is -4 override with -no4 -no6
  -6 -ipv6           Install filter for IPv6 addresses / For both, use -4 -6
+ -conntrack         Use -m conntrack rather than -m state to avoid warnings from newer iptables
  -log               Install a logging rule to log rejected packets.
  -nolog             Don\'t install a logging rule. (default)
  -nolimit           Do not limit logging (can generate huge log files if under attack; not advised)
@@ -215,6 +224,7 @@ Arguments for start-class commands are:
                     also be specified.  May specify any number of times.
  -dip ip(\/mask)    Deny connections from an otherwise allowed IP address.
                     Same syntax as -aip.
+ -passive           When using FTP for updates, use passive mode (traverse firewalls)
  -path /sbin        Path for iptables utilities (use in $CFGFILE)
  -permitonly        Listed countries will be permited, all others denied.
  -blockout          Also generate rules to block output & forwarded-output.
