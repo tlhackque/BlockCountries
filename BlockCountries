@@ -9,7 +9,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.3';
+my $VERSION = '2.4';
 
 # Copyright (c) 2010,2012, 2015 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -122,6 +122,7 @@ use Text::ParseWords;
 # 2.1       Update for extended statistics file format defined by https://www.arin.net/knowledge/statistics/nro_extended_stats_format.pdf
 # 2.2       Switch to conntrack --ctstate to avoid warnings.
 # 2.3       Add support for passive mode FTP to avoid requring FTP_PASSIVE.environment variable. Make conntrack use optional under -newstate
+# 2.4       Clarify -permitonly and rule placement/priorities in help
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -441,7 +442,7 @@ they will match the same address (no more and no fewer.)
 Arguments for start-class commands are:
  -update            Get latest IP allocation data from regional registries.
                     Otherwise, only gets data if no local file exists for a registry.
- -4 -ipv4           Install filter for IPv4 addresses \ Default is -4 override with -no4 -no6
+ -4 -ipv4           Install filter for IPv4 addresses \\ Default is -4 override with -no4 -no6
  -6 -ipv6           Install filter for IPv6 addresses / For both, use -4 -6
  -conntrack         Use -m conntrack rather than -m state to avoid warnings from newer iptables
  -log               Install a logging rule to log rejected packets.
@@ -462,11 +463,12 @@ Arguments for start-class commands are:
  -passive           When using FTP for updates, use passive mode (traverse firewalls)
  -path /sbin        Path for iptables utilities (use in $CFGFILE)
  -permitonly        Listed countries will be permited, all others denied.
+                    Put in -permitonly in $CFGFILE so status and start are consistent.
  -blockout          Also generate rules to block output & forwarded-output.
                     This is probably not required for most applications, and
                     will roughly double the memory requirements.
                     Caution: If you use -blockout for start, you must also use it for stop.
-                    This will not be a problem if it\'s in the config file.
+                    This will not be a problem if it\'s in $CFGFILE.
  -d                 Output random debugging messages
  -v                 Output extended status/statistics
   CC                ISO Country code or name to ban (or permit if -permitonly).
@@ -488,7 +490,8 @@ line\'s arguments.
 Use single or double-quoted strings for country names containining spaces.
 
 This script is designed to run as a service; chkconfig will link it into
-/etc/rcn.d/.
+/etc/rcn.d/.  Be sure to put all configuration in $CFGFILE, since startup
+scripts only get "start" (or "stop")  as an argument.
 
 This script should also be run with start -update from a cron job - weekly
 is suggested - to obtain the latest IP address databases.  If the CRONJOB
@@ -501,6 +504,26 @@ this to be effective, you should not stop the service.
 
 The status -v command will report the current configuration, although the
 actual implementation in iptables will be different due to optimizations.
+
+Rules are applied to the INPUT, OUTPUT or FORWARD chains after any existing
+IPTABLES rules.  Typically, this means that related and established connections
+are accepted before BlockCountries rules are applied, and icmp packets are
+allowed.  (This varies by distribution and local option.)  To control
+placement, define the corresponding -HOOK chain.(e.g. INPUT-HOOK) and call it
+it from the main chain(s).  BlockCountries rules will be installed in
+the -HOOK chain instead of the main chain.
+
+When manual configuration directives are used, the rules are applied in the
+following order (first match determines result):
+   -atports (or -atportso) are accepted
+   -auports (or -auportso) are accepted
+   -aips are accepted
+   -dips are denied
+   Country constraints deny or accept (per -permitonly)
+   IPTABLES rules later in the caller\'s chain
+If a BlockCountries rule denies a connection, it will be dropped (and logged).
+If a BlockCountries rule "accepts" a connection, it is still subject to any
+IPTABLES rules that follow it.
 
 To view the actual iptables configuration, use
     $IPT4 -nvL --line-number | less for IPV4 or
@@ -542,7 +565,7 @@ Issues:
  This code should use IPTables::IPv4 - but it doesn\'t currently work on my x64 system.
  It may be re-written to do so at some point.
 
- --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013
+ --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013, 17-Dec-2015
 HELP
 }
 

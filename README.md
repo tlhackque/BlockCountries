@@ -5,7 +5,7 @@ iptables manager to block by country
 
 Copyright (C) 2010, 2012, 2013, 2015 Timothe Litt
 
-BlockCountries generates iptables and ipv6tables 
+BlockCountries generates iptables and ipv6tables
 that allow blocking IP traffic based on the country
 that the IP address is assigned to by the issuing NIC.
 
@@ -21,7 +21,7 @@ those that you wish to permit.  There are other options.
 BlockCountries obtains the IP address data from the NICs.
 
 The generated iptables are optimized for chain length,
-generating subchains when it is advantageous.  
+generating subchains when it is advantageous.
 
 BlockCountries can (and should) be run as a cron job to get
 updates to the IP address allocations, and as an initscript
@@ -42,10 +42,13 @@ V2.3 Make conntrack optional - older netfilters are still around
 * Use -conntrack if you see warnings (or errors)
 * Add -passive to use passive FTP connection when getting registry data.  This usually traverses firewalls more easily.
 
+V2.4 Documentation updates, no functional changes.
+* Clarify -permitonly and rules placement/priorities
+
 #Dependencies:
 The script uses the following Perl library modules, available
 from CPAN (or in the base Perl distribution).  Those preceeded
-by # are only used if a particular command requires them.  
+by # are only used if a particular command requires them.
 
 If you are unfamiliar with Perl, you may want to use the bcinstall
 bash script, which will determine whether they (and Perl) are installed.
@@ -91,7 +94,7 @@ If Perl is not installed in /usr/bin, change the first line from
 #!/usr/bin/perl
 
 to the location of your perl interpreter
-On Unix-like systems, 
+On Unix-like systems,
 
 which perl
 
@@ -174,8 +177,18 @@ The filter should download the latest IP country assignments and be in place.
 
 #Usage:
 
-The usage as of V2.0 follows (the words prefixed by $ are filled
-in at runtime):
+The usage as of V2.4 follows (the words prefixed by $ are filled
+in at runtime).  Later versions differ - the definitive version,
+which is customized for your system, is available from:
+````
+$prog help
+````
+
+The following usage provides an introduction to BlockCountries.
+
+Please do not use this version of the usage to configure BlockCountries
+for prodution; use the version from the `help` command, which is
+always up-to-date with the latest functions and clarifications.
 
 ````
 IP filter manager for country filters
@@ -228,15 +241,17 @@ Arguments for start-class commands are:
  -passive           When using FTP for updates, use passive mode (traverse firewalls)
  -path /sbin        Path for iptables utilities (use in $CFGFILE)
  -permitonly        Listed countries will be permited, all others denied.
+                    Put in -permitonly in $CFGFILE so status and start are consistent.
  -blockout          Also generate rules to block output & forwarded-output.
                     This is probably not required for most applications, and
                     will roughly double the memory requirements.
                     Caution: If you use -blockout for start, you must also use it for stop.
-                    This will not be a problem if it\'s in the config file.
+                    This will not be a problem if it\'s in $CFGFILE.
  -d                 Output random debugging messages
  -v                 Output extended status/statistics
   CC                ISO Country code or name to ban (or permit if -permitonly).
                     Specify as many as you like.
+                    Default list:
 
 Arguments may also be obtained from $CFGFILE.
 Anything (except comments) contained in it is prepended to every command
@@ -245,7 +260,8 @@ line\'s arguments.
 Use single or double-quoted strings for country names containining spaces.
 
 This script is designed to run as a service; chkconfig will link it into
-/etc/rcn.d/.
+/etc/rcn.d/.  Be sure to put all configuration in $CFGFILE, since startup
+scripts only get "start" (or "stop")  as an argument.
 
 This script should also be run with start -update from a cron job - weekly
 is suggested - to obtain the latest IP address databases.  If the CRONJOB
@@ -258,6 +274,26 @@ this to be effective, you should not stop the service.
 
 The status -v command will report the current configuration, although the
 actual implementation in iptables will be different due to optimizations.
+
+Rules are applied to the INPUT, OUTPUT or FORWARD chains after any existing
+IPTABLES rules.  Typically, this means that related and established connections
+are accepted before BlockCountries rules are applied, and icmp packets are
+allowed.  (This varies by distribution and local option.)  To control
+placement, define the corresponding -HOOK chain.(e.g. INPUT-HOOK) and call it
+it from the main chain(s).  BlockCountries rules will be installed in
+the -HOOK chain instead of the main chain.
+
+When manual configuration directives are used, the rules are applied in the
+following order (first match determines result):
+   -atports (or -atportso) are accepted
+   -auports (or -auportso) are accepted
+   -aips are accepted
+   -dips are denied
+   Country constraints deny or accept (per -permitonly)
+   IPTABLES rules later in the caller\'s chain
+If a BlockCountries rule denies a connection, it will be dropped (and logged).
+If a BlockCountries rule "accepts" a connection, it is still subject to any
+IPTABLES rules that follow it.
 
 To view the actual iptables configuration, use
     $IPT4 -nvL --line-number | less for IPV4 or
@@ -299,5 +335,5 @@ Issues:
  This code should use IPTables::IPv4 - but it doesn\'t currently work on my x64 system.
  It may be re-written to do so at some point.
 
- --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012
+ --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013, 17-Dec-2015
 ````
