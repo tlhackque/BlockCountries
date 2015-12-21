@@ -47,6 +47,8 @@ V2.4 Documentation updates, no functional changes.
 
 V2.5 Fix uninitialized variable when no command arguments specified.
 
+V2.6 Add version command. Syntax cleanup. Corner case fix for help.
+
 #Dependencies:
 The script uses the following Perl library modules, available
 from CPAN (or in the base Perl distribution).  Those preceeded
@@ -54,22 +56,25 @@ by # are only used if a particular command requires them.
 
 If you are unfamiliar with Perl, you may want to use the bcinstall
 bash script, which will determine whether they (and Perl) are installed.
+bcinstall will NOT verify that the minimum required version of each
+module is installed.  The versions below are known to work, but later versions
+should be used if available.  Use earlier versions at your own risk.
 
 ````
-File::Basename
-File::Path
-#IO::Uncompress::Gunzip
-Locale::Country
-#LWP::Simple
-Net::IP;
-NetAddr::IP
-#Net::Domain
-#Parse::Syslog
-#POSIX
-Regexp::IPv6 qw( $IPv6_re )
-Socket
-Storable
-Text::ParseWords
+File::Basename          2.74
+File::Path              2.08
+#IO::Uncompress::Gunzip 2.064
+Locale::Country         3.17
+#LWP::Simple            6.10
+Net::IP;                1.25
+NetAddr::IP             4.044
+#Net::Domain            2.23
+#Parse::Syslog          1.10
+#POSIX                  1.09
+Regexp::IPv6            0.03
+Socket                  2.006
+Storable                2.30
+Text::ParseWords        3.27
 ````
 
 #Cautions:
@@ -339,3 +344,11 @@ Issues:
 
  --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013, 17-Dec-2015
 ````
+
+#Bug reports and suggestions
+
+Please raise bug reports or suggestions at http://github.com/tlhackque/BlockCountries/issues.
+
+Always include `BlockCountries version` and `perl --version`.
+
+Praise is also welcome.

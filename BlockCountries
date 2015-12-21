@@ -9,7 +9,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.5';
+my $VERSION = '2.6';
 
 # Copyright (c) 2010,2012, 2015 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -104,7 +104,7 @@ use Socket qw( :addrinfo SOCK_RAW );
 use Storable qw( lock_store lock_retrieve );
 use Text::ParseWords;
 
-# Changelog (Also update revision above!)
+# Changelog (Also update revision above & README!)
 # 1.0       Initial development
 # 1.1       Add support for hook tables
 # 1.2       By unpopular demand, add -permitonly
@@ -124,6 +124,7 @@ use Text::ParseWords;
 # 2.3       Add support for passive mode FTP to avoid requring FTP_PASSIVE.environment variable. Make conntrack use optional under -newstate
 # 2.4       Clarify -permitonly and rule placement/priorities in help
 # 2.5       Fix uninitialized variable $cmd with no arguments.
+# 2.6       Add --version commmand, syntax cleanup for print & printf.  Remove help switches due to uninitialized configuration variables.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -172,7 +173,7 @@ sub gport {
     my $val = getservbyname( $arg, $prot );
     return $val if( defined $val );
 
-    print "Invalid $prot port $arg\n";
+    print( "Invalid $prot port $arg\n" );
     exit 1;
 }
 
@@ -189,7 +190,7 @@ sub gip {
 
     my ( $err, @res ) = getaddrinfo( $arg, "", { socktype => SOCK_RAW } );
     if( $err ) {
-        print "Unrecognized $arg: $err\n";
+        print( "Unrecognized $arg: $err\n" );
         exit 1;
     }
 
@@ -200,7 +201,7 @@ sub gip {
     while( my $ai = shift @res ) {
         my ( $err, $ipaddr ) = getnameinfo( $ai->{addr}, NI_NUMERICHOST, NIx_NOSERV );
         if( $err ) {
-            print "Unrecognized $arg: $err\n";
+            print( "Unrecognized $arg: $err\n" );
             exit 1;
         }
         push @ips, NetAddr::IP->new( $ipaddr );
@@ -223,7 +224,7 @@ while( (my $arg = shift) ) {
         }
         if( $arg eq '-limit' && $ARGV[0] ) {
             unless( $ARGV[0] =~ m#(\d+/(?:second|minute|hour|day))(?::(\d+))?# ) {
-                print "Syntax error in -limit $ARGV[0]\n";
+                print( "Syntax error in -limit $ARGV[0]\n" );
                 exit 1;
             }
             shift;
@@ -319,13 +320,10 @@ while( (my $arg = shift) ) {
             $ipv6 = 0;
             next;
         }
-        if( $arg eq '-h' || $arg eq '--help' ) {
-            Usage();
-            exit 0;
-        }
-        print "Unknown switch $arg";
-        print ' ', $ARGV[0] if( defined $ARGV[0] && $ARGV[0] !~ /^-/ );
-        print "\n";
+        # Usage can't be supplied here since configuration isn't set up
+        print( "Unknown switch $arg" );
+        print( ' ', $ARGV[0] ) if( defined $ARGV[0] && $ARGV[0] !~ /^-/ );
+        print( "\n" );
         exit 1;
     }
     if( defined code2country( $arg ) ) {
@@ -335,7 +333,7 @@ while( (my $arg = shift) ) {
         if( defined $cc ) {
             $iso{lc $cc} = 1;
         } else {
-            print "Unrecognized country/country code: $arg\n";
+            print( "Unrecognized country/country code: $arg\n" );
             exit 1;
         }
     }
@@ -414,7 +412,7 @@ my %IP = (
 my @genlist = $outrules? qw/I O/ : 'I';
 
 sub Usage {
-    print << "HELP";
+    print( << "HELP" );
 IP filter manager for country filters version $VERSION
 
 Usage: $prog command args
@@ -478,12 +476,12 @@ Arguments for start-class commands are:
                     Default list:
 HELP
     for my $cc (sort @DEFAULT_ISO ) {
-        print "                      $cc - ", code2country($cc), "\n";
+        print( "                      $cc - ", code2country($cc), "\n" );
     }
 my $IPT4 = $IP{4}{IPT};
 my $IPT6 = $IP{6}{IPT};
 
-    print << "HELP";
+    print( << "HELP" );
 
 Arguments may also be obtained from $CFGFILE.
 Anything (except comments) contained in it is prepended to every command
@@ -539,6 +537,11 @@ logging must be on for this to work.  -days specifys how many days back
 (from the current time) to read.  -host specifies the hostname to match.
 Default -days is 1, hostname is current host.
 
+Bug reports:
+ Please raise bug reports or suggestions at http://github.com/tlhackque/BlockCountries/issues.
+ Always include BlockCountries version and perl --version.
+ Praise is also welcome.
+
 Credits:
  Some ideas came from http://www.cyberciti.biz/faq/block-entier-country-using-iptables/.
 
@@ -582,9 +585,9 @@ sub success {
     return 1 if( $ENV{CRONJOB} );
 
     if( -t STDOUT ) {
-        print "\033[60G[\033[1;32m OK \033[0;39m]\n";
+        print( "\033[60G[\033[1;32m OK \033[0;39m]\n" );
     } else {
-        print " [ OK ]\n";
+        print( " [ OK ]\n" );
     }
     return 1;
 }
@@ -593,9 +596,9 @@ sub failure {
     return 0 if( $ENV{CRONJOB} );
 
     if( -t STDOUT ) {
-        print "\033[60G[\033[1;31m FAILED \033[0;39m]\n";
+        print( "\033[60G[\033[1;31m FAILED \033[0;39m]\n" );
     } else {
-        print " [ FAILED ]\n";
+        print( " [ FAILED ]\n" );
     }
     return 0;
 }
@@ -647,69 +650,69 @@ sub pport {
     my $p = shift;
     my @p = @_;
 
-    printf "  %5u", $p;
+    printf( "  %5u", $p );
     if( @p ) {
-        print " $p[0]";
+        print( " $p[0]" );
         if( length $p[1] ) {
-            print " (", join( '/', split( ' ', $p[1] ) ), ")";
+            print( " (", join( '/', split( ' ', $p[1] ) ), ")" );
         }
     }
-    print "\n";
+    print( "\n" );
 }
 
 sub status {
     if( (my $r = running) ) {
-        print "Blocked countries $r filter is running";
+        print( "Blocked countries $r filter is running" );
         if( $verbose ) {
-            printf " and configured to %s:\n", ($permitonly? 'permit only' : 'block');
+            printf( " and configured to %s:\n", ($permitonly? 'permit only' : 'block') );
             for my $cc (sort @iso ) {
-                print " $cc - ", code2country($cc), "\n";
+                print( " $cc - ", code2country($cc), "\n" );
             }
             if( (my $n = @atports + @auports + @atportso + @auportso + @aips + @dips) ) {
-                printf "However, the following exception%s:\n", ($n == 1)? ' exists' : 's exist';
+                printf( "However, the following exception%s:\n", ($n == 1)? ' exists' : 's exist' );
                 if( @atports ) {
-                    printf " TCP port%s permitted (input):\n", ((@atports == 1)? '' : 's');
+                    printf( " TCP port%s permitted (input):\n", ((@atports == 1)? '' : 's') );
                     for my $p (@atports) {
                         pport( $p,  getservbyport($p, 'tcp') );
                     }
                 }
                 if( @atportso ) {
-                    printf " TCP port%s permitted (output):\n", ((@atportso == 1)? '' : 's');
+                    printf( " TCP port%s permitted (output):\n", ((@atportso == 1)? '' : 's') );
                     for my $p (@atportso) {
                         pport( $p,  getservbyport($p, 'tcp') );
                     }
                 }
                 if( @auports ) {
-                    printf " UDP port%s permitted (input):\n", ((@auports == 1)? '' : 's');
+                    printf( " UDP port%s permitted (input):\n", ((@auports == 1)? '' : 's') );
                     for my $p (@auports) {
                         pport( $p, getservbyport($p, 'udp') );
                     }
                 }
                 if( @auportso ) {
-                    printf " UDP port%s permitted (output):\n", ((@auportso == 1)? '' : 's');
+                    printf( " UDP port%s permitted (output):\n", ((@auportso == 1)? '' : 's') );
                     for my $p (@auportso) {
                         pport( $p, getservbyport($p, 'udp') );
                     }
                 }
                 if( @aips ) {
-                    printf " IP %s permitted:\n", ((@aips == 1)? 'address/network' : 'addresses/networks');
+                    printf( " IP %s permitted:\n", ((@aips == 1)? 'address/network' : 'addresses/networks') );
                     for my $ip (@aips) {
-                        printf "    $ip\n";
+                        printf( "    $ip\n" );
                     }
                 }
                 if( @dips ) {
-                    printf " IP %s blocked:\n", ((@dips == 1)? 'address/network' : 'addresses/networks');
+                    printf( " IP %s blocked:\n", ((@dips == 1)? 'address/network' : 'addresses/networks') );
                     for my $ip (@dips) {
-                        printf "    $ip\n";
+                        printf( "    $ip\n" );
                     }
                 }
             }
         } else {
-            print "\n";
+            print( "\n" );
         }
         return 1;
     }
-    print "Blocked countries IP filter is stopped\n";
+    print( "Blocked countries IP filter is stopped\n" );
     return 0;
 }
 
@@ -722,12 +725,12 @@ sub list {
     }
     close $lh;
 
-    print "Recognized country codes:\n";
+    print( "Recognized country codes:\n" );
 
     for my $cc (sort keys %ccs) {
         my $cn = code2country($cc);
         next unless( defined $cn ); # There seem to be some undocumented zones
-        printf " $cc - %s\n", $cn
+        printf( " $cc - %s\n", $cn );
     }
     return 1;
 }
@@ -739,7 +742,7 @@ sub startUpdate( $ ) {
     $iptr = "tee /dev/fd/2 | $iptr" if( $debug );
 
     open( my $fh, '|-', $iptr . " -n" ) or ( print( $iptr . ": $!\n"), return undef );
-    print $fh "*filter\n";
+    print $fh ( "*filter\n" );
 
     return $fh;
 }
@@ -747,7 +750,7 @@ sub startUpdate( $ ) {
 sub commitUpdate( $ ) {
     my $fh = shift;
 
-    print $fh "COMMIT\n";
+    print $fh ( "COMMIT\n" );
     close $fh or die "Table update failed: $?\n";
 
     return 1;
@@ -765,9 +768,9 @@ sub defchain( $\%$;$ ) {
     # Syntax differs for built-in chains.
 
     if( $chain =~ /^(INPUT|OUTPUT|FORWARD)$/ ) {
-        print $fh ":$chain ACCEPT [0:0]\n";
+        print $fh ( ":$chain ACCEPT [0:0]\n" );
     } else {
-        print $fh ":$chain - [0:0]\n"
+        print $fh ( ":$chain - [0:0]\n" );
     }
     $declared->{$chain} = ($remove? 2 : 1);
 }
@@ -794,7 +797,7 @@ sub deleterules( $\%$$)  {
             $chain = $1;
             if( $chain =~ /^$CHAIN-/ ) { # A (sub)chain of ours, flush contents, queue deletion
                 defchain( $fh, %$declared, $chain, 1 );
-                print $fh "-F $chain\n";
+                print $fh ( "-F $chain\n" );
             }
         } elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) {
             die "Bad table format at $.\n" unless( defined $chain );
@@ -802,7 +805,7 @@ sub deleterules( $\%$$)  {
             if( $chain =~ $HOOK ) { # Remove rule in hook that calls our chain
                 # Must not defchain a hook as it will (mysteriously) empty it,
                 # causing -D to fail (and other chains using the hook to be lost as well.)
-                print $fh "-D $chain -j $target\n";
+                print $fh ( "-D $chain -j $target\n" );
             }
         }
     }
@@ -813,7 +816,7 @@ sub deleterules( $\%$$)  {
 
     foreach my $chain (keys %$declared ) {
         if( $declared->{$chain} == 2 ) {
-            print $fh "-X $chain\n";
+            print $fh ( "-X $chain\n" );
             delete $declared->{$chain}; # Allow redeclaration
         }
     }
@@ -839,7 +842,7 @@ sub ipcmp {
 # Start command
 
 sub start {
-    print "Starting blocked countries IP filter: " unless( $ENV{CRONJOB} );
+    print( "Starting blocked countries IP filter: " ) unless( $ENV{CRONJOB} );
 
     File::Path::make_path( $ZONEDIR, { mode => 0771 } ) unless( -d $ZONEDIR );
 
@@ -868,29 +871,29 @@ sub start {
         require LWP::Simple;
         LWP::Simple->import;
 
-        print "\nChecking $rir for new data" if( $debug );
+        print( "\nChecking $rir for new data" ) if( $debug );
         my $rc = mirror( $RIRS{$rir}, $db );
         if( is_success( $rc ) ) {
 
-            print "\nUpdated IP zone data from $rir", if( $debug || $update || $ENV{CRONJOB} );
+            print( "\nUpdated IP zone data from $rir" ) if( $debug || $update || $ENV{CRONJOB} );
             # Shouldn't ever get an empty file, but may as well check
             unless( -f $db && -s $db ) {
-                print "\nUpdated zone data from $rir is empty!";
+                print( "\nUpdated zone data from $rir is empty!" );
                 unlink $db;
                 return failure;
             }
             $newdata = 1;
         } else {
             if( $rc == RC_NOT_MODIFIED() ) { # Can only happen if file exists
-                print "\nNo new IP data available from $rir " if( $debug || ($update && !$ENV{CRONJOB}) );
+                print( "\nNo new IP data available from $rir " ) if( $debug || ($update && !$ENV{CRONJOB}) );
             } else {
-                print "\nUnable to fetch IP zone data from $rir: $rc - ", status_message($rc), " ";
+                print( "\nUnable to fetch IP zone data from $rir: $rc - ", status_message($rc), " " );
             }
             next;
         }
         unless( -f $db && -s $db ) {
             # No data - don't replace current country files or filter
-            print "\nNo IP zone data available from $rir ";
+            print( "\nNo IP zone data available from $rir " );
             if( $debug ) {
                 next;
             }
@@ -933,7 +936,7 @@ sub start {
                 unless( defined $version ) {
                     ( $version, $reg, $serial, $records, $startdate, $enddate, $utc ) = split( m/\|/, $_, 7 );
                     unless( defined $version && $version =~ /^2(?:\.3)?$/ ) {
-                        print "\nUnknown version $version for $db";
+                        print( "\nUnknown version $version for $db" );
                         return failure;
                     }
                     next;
@@ -973,14 +976,14 @@ sub start {
                 }
                 $n++;
             }
-            print "\nExtracted ", $r4+$r6, " ranges ($r4 IPV4, $r6 IPV6) from $n records from $db " if( $debug );
+            print( "\nExtracted ", $r4+$r6, " ranges ($r4 IPV4, $r6 IPV6) from $n records from $db " ) if( $debug );
         }
 
         # Index of all country codes (for LIST, so the RIR files don't need to be scanned.)
 
         open( my $idx, '>', "$ZONEDIR/cclist.txt" ) or ( print( "Can't open index: $!\n" ), return 0 );
         for my $cc (sort keys %ccavail) {
-            print $idx "$cc\n";
+            print $idx ( "$cc\n" );
         }
         close $idx;
 
@@ -992,11 +995,11 @@ sub start {
                 $cips{$cc}{$ipv} = [ NetAddr::IP::Compact(@{$cips{$cc}{$ipv}}) ];
                 if( $verbose && $inc ) {
                     my $outc = @{$cips{$cc}{$ipv}};
-                    print "\nExtracted $inc IPV$ipv ranges", ($inc == $outc? '' : "; compressed to $outc"), " for $cc ";
+                    print( "\nExtracted $inc IPV$ipv ranges", ($inc == $outc? '' : "; compressed to $outc"), " for $cc " );
                 }
             }
             lock_store( $cips{$cc}, "$ZONEDIR/$cc.cdb" ) or ( print( "\nUnable to write $ZONEDIR/$cc.cdb: $! "), return failure );
-            print "\nWrote $ZONEDIR/$cc.cdb" if( $debug );
+            print( "\nWrote $ZONEDIR/$cc.cdb" ) if( $debug );
         }
     }
 
@@ -1010,7 +1013,7 @@ sub start {
         unless( -f $db && -s $db ) {
             # No data - don't replace current filter
             $cn ||= '';
-            print "\nNo IP zone data available for $c$cn ";
+            print( "\nNo IP zone data available for $c$cn " );
             if( $debug ) {
                 next;
             }
@@ -1019,10 +1022,10 @@ sub start {
         unless( $cips{$c} ) {
             $cips{$c} = lock_retrieve( $db );
             unless( $cips{$c} ) {
-                print "\nUnable to read $db: $!\n";
+                print( "\nUnable to read $db: $!\n" );
                 return failure;
             }
-            print "\nRead $ZONEDIR/$c.cdb" if( $debug );
+            print( "\nRead $ZONEDIR/$c.cdb" ) if( $debug );
         }
     }
 
@@ -1073,17 +1076,17 @@ sub start {
             # lookup each IP.
             my $limits = '';
             $limits = "-m limit --limit $loglimits[0] --limit-burst $loglimits[1] " if( @loglimits );
-            print $fh "-A ${NEWCHAIN}-DLOG $limits-j LOG --log-prefix \"$LOGPFX\"\n";
+            print $fh ( "-A ${NEWCHAIN}-DLOG $limits-j LOG --log-prefix \"$LOGPFX\"\n" );
         }
-        print $fh "-A ${NEWCHAIN}-DLOG -j DROP\n";
+        print $fh ( "-A ${NEWCHAIN}-DLOG -j DROP\n" );
 
         my( $exceptions, $xrules ) = (0,0);
         foreach my $pchain ( @genlist ) {
             defchain( $fh, %declared, "${NEWCHAIN}-${pchain}" );
             if( $conntrack ) {
-                print $fh "-A ${NEWCHAIN}-$pchain -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n";
+                print $fh ( "-A ${NEWCHAIN}-$pchain -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n" );
             } else {
-                print $fh "-A ${NEWCHAIN}-$pchain -m state --state RELATED,ESTABLISHED -j RETURN\n";
+                print $fh ( "-A ${NEWCHAIN}-$pchain -m state --state RELATED,ESTABLISHED -j RETURN\n" );
             }
 
             # List any allowed ports - first since they have a netmask of 0
@@ -1097,7 +1100,7 @@ sub start {
             while( @ports ) {
                 my $n = @ports;
                 $n = 15 if( $n > 15 );
-                print $fh "-A ${NEWCHAIN}-$pchain -p tcp -m multiport --dports " . join( ',', @ports[0..$n-1] ) . " -j RETURN\n";
+                print $fh ( "-A ${NEWCHAIN}-$pchain -p tcp -m multiport --dports " . join( ',', @ports[0..$n-1] ) . " -j RETURN\n" );
                 splice( @ports, 0, $n );
                 $xrules++;
             }
@@ -1110,7 +1113,7 @@ sub start {
             while( @ports ) {
                 my $n = @ports;
                 $n = 15 if( $n > 15 );
-                print $fh "-A ${NEWCHAIN}-$pchain -p udp -m multiport --dports " . join( ',', @ports[0..$n-1] ) . " -j RETURN\n";
+                print $fh ( "-A ${NEWCHAIN}-$pchain -p udp -m multiport --dports " . join( ',', @ports[0..$n-1] ) . " -j RETURN\n" );
                 splice( @ports, 0, $n );
                 $xrules++;
             }
@@ -1125,7 +1128,7 @@ sub start {
                 my $ip = shift @ips;
                 next unless( $ip->version == $ipv->{VERSION} );
                 $xrules++;
-                print $fh "-A ${NEWCHAIN}-$pchain -$match $ip -j RETURN\n";
+                print $fh ( "-A ${NEWCHAIN}-$pchain -$match $ip -j RETURN\n" );
             }
 
             # Explicitly blocked IPs
@@ -1135,7 +1138,7 @@ sub start {
                 my $ip = shift @ips;
                 next unless( $ip->version == $ipv->{VERSION} );
                 $xrules++;
-                print $fh "-A ${NEWCHAIN}-$pchain -$match $ip -j ${NEWCHAIN}-DLOG\n";
+                print $fh ( "-A ${NEWCHAIN}-$pchain -$match $ip -j ${NEWCHAIN}-DLOG\n" );
             }
 
 
@@ -1167,9 +1170,9 @@ sub start {
                         # We could split the net, but that isn't worthwhile, as all paths
                         # lead to the same result and it costs memory.  So no subchains in those cases.
                         if( $permitonly ) {
-                            print $fh "-A ${NEWCHAIN}-${pchain} -$match $ipblock -j RETURN\n";
+                            print $fh ( "-A ${NEWCHAIN}-${pchain} -$match $ipblock -j RETURN\n" );
                         } else {
-                            print $fh "-A ${NEWCHAIN}-${pchain} -$match $ipblock -j ${NEWCHAIN}-DLOG\n";
+                            print $fh ( "-A ${NEWCHAIN}-${pchain} -$match $ipblock -j ${NEWCHAIN}-DLOG\n" );
                         }
                         $mrules++;
                         next;
@@ -1196,7 +1199,7 @@ sub start {
             foreach my $subchain (keys %subchains) {
                 if( $subchains{$subchain}{length} == 1 ) {
                     # Inline this subchain, as it is less expensive than the small chain
-                    print $fh "-A ${NEWCHAIN}-${pchain} -$match " . (@{$subchains{$subchain}{blocks}})[0] . " -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n");
+                    print $fh ( "-A ${NEWCHAIN}-${pchain} -$match " . (@{$subchains{$subchain}{blocks}})[0] . " -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
                     $inlined++;
                     $mrules++;
                     next;
@@ -1204,7 +1207,7 @@ sub start {
                 # Either for data or dispatch to child chains (or both), we need this subchain
 
                 defchain( $fh, %declared, "${NEWCHAIN}-${pchain}-$subchain", 0 );
-                print $fh $subchains{$subchain}{define};
+                print $fh ( $subchains{$subchain}{define} );
 
                 if( $subchains{$subchain}{length} > 50 ) { # Empirical threshold.
                     if( $ipv->{VERSION} == 4 ) {
@@ -1230,13 +1233,13 @@ sub start {
                                 next;
                             }
                             defchain( $fh, %declared, "${NEWCHAIN}-${pchain}-${subchain}-${kid}", 0 );
-                            print $fh "-A ${NEWCHAIN}-${pchain}-${subchain} -$match ${subchain}.${kid}.0.0/16 -g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n";
+                            print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match ${subchain}.${kid}.0.0/16 -g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n" );
                             $subchains{$subchain}{length}++;
                             foreach my $ipblock (@{$kids{$kid}}) {
-                                print $fh "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n");
+                                print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
                             }
                             if( $permitonly ) {
-                                print $fh "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -j ${NEWCHAIN}-DLOG\n";
+                                print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -j ${NEWCHAIN}-DLOG\n" );
                             }
                             $kidchains++;
                         }
@@ -1268,13 +1271,13 @@ sub start {
                             $submask =~ tr/://d;
                             $submask .= '0' x (4-(length($submask) % 4)) if( length($submask) %4 ); # Left-justify mask
                             $submask =~ s/([[:xdigit:]]{4})/$1:/g;
-                            print $fh "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $submask:0/40 -g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n";
+                            print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $submask:0/40 -g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n" );
                             $subchains{$subchain}{length}++;
                             foreach my $ipblock (@{$kids{$kid}}) {
-                                print $fh "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n");
+                                print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
                             }
                             if( $permitonly ) {
-                                print $fh "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -j ${NEWCHAIN}-DLOG\n";
+                                print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -j ${NEWCHAIN}-DLOG\n" );
                             }
                             $kidchains++;
                         }
@@ -1283,10 +1286,10 @@ sub start {
                 }
 
                 foreach my $ipblock (@{$subchains{$subchain}{blocks}}) {
-                    print $fh "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n");
+                    print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
                 }
                 if( $permitonly ) {
-                    print $fh "-A ${NEWCHAIN}-${pchain}-${subchain} -j ${NEWCHAIN}-DLOG\n";
+                    print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -j ${NEWCHAIN}-DLOG\n" );
                 }
             }
 
@@ -1307,10 +1310,10 @@ sub start {
             }
 
             # Link hook'd chain to new chain
-            print $fh "-I $hook -j ${NEWCHAIN}-${pchain}\n";
+            print $fh ( "-I $hook -j ${NEWCHAIN}-${pchain}\n" );
 
             # Forward shares chain with output
-            print $fh "-I " . $ipv->{'FHOOK'} . " -j ${NEWCHAIN}-${pchain}\n" if( $pchain eq 'O' );
+            print $fh ( "-I " . $ipv->{'FHOOK'} . " -j ${NEWCHAIN}-${pchain}\n" ) if( $pchain eq 'O' );
         }
 
         if( $verbose ) {
@@ -1337,7 +1340,7 @@ sub start {
 sub stop {
     return 1 if( !running );
 
-    print "Removing blocked countries IP filter";
+    print( "Removing blocked countries IP filter" );
 
     for my $ipv (values %IP) {
         next unless( $ipv->{ENABLED} );
@@ -1385,7 +1388,7 @@ sub intercepts {
     foreach my $logfile (glob $LOG) {
         my $lh = IO::Uncompress::Gunzip->new( $logfile, MultiStream => 1, Transparent => 1 );
         unless( $lh ) {
-            print "Skipping system log file: $IO::Uncompress::Gunzip::GunzipError\n";
+            print( "Skipping system log file: $IO::Uncompress::Gunzip::GunzipError\n" );
             my $x = $IO::Uncompress::Gunzip::GunzipError; # 2nd use (because we require rather than use)
             next;
         }
@@ -1411,7 +1414,7 @@ sub intercepts {
 
     # List each intercepted IP, its country, the protocols, ports and number of packets for each
 
-    print "Intercepts by host IP:\n";
+    print( "Intercepts by host IP:\n" );
 
     my( %ccip, %ccn );
     foreach (glob "$ZONEDIR/*.cdb") {
@@ -1420,10 +1423,10 @@ sub intercepts {
 
         $ccip{$cc} = lock_retrieve( $_ );
         unless( $ccip{$cc} ) {
-            print "\nUnable to read $_: $!\n";
+            print( "\nUnable to read $_: $!\n" );
             return 0;
         }
-        print "\nRead $_" if( $debug );
+        print( "\nRead $_" ) if( $debug );
     }
 
     for my $ip (sort ipcmp map {NetAddr::IP->new($_)} keys %ips) {
@@ -1433,7 +1436,7 @@ sub intercepts {
             my $cips = $ccip{$cc}{$ip->version};
             foreach my $cip (@$cips) {
                 if( $cip->contains($ip) ) {
-                    print "$cc: ";
+                    print( "$cc: " );
                     $ccn = $cc;
                     last CCSEARCH;
                 }
@@ -1441,18 +1444,18 @@ sub intercepts {
         }
         unless( $ccn ) {  # Old log entries from country no longer blocked, or have a -dip from an unblocked country
             $ccn = '??';
-            print '??: ';
+            print( '??: ' );
         }
         print(  ($ip->version == 6? $ip->short : $ip->addr) );
         my @plist = sort keys %{$ips{$ip->addr}}; # Protocol
         for my $p (@plist) {
             my @rlist = sort keys %{$ips{$ip->addr}{$p}}; # Ports
-            print ' ', join( ' ', map { my $n = $ips{$ip->addr}{$p}{$_}; $ccn{$ccn} += $n; "$p-$_($n)" } @rlist );
+            print( ' ', join( ' ', map { my $n = $ips{$ip->addr}{$p}{$_}; $ccn{$ccn} += $n; "$p-$_($n)" } @rlist ) );
         }
-        print "\n";
+        print( "\n" );
     }
 
-    print "Intercepts by country:\n";
+    print( "Intercepts by country:\n" );
     for my $cc (sort {$ccn{$b} <=> $ccn{$a} } keys %ccn) {
         my $cn = code2country($cc);
         if( defined $cn ) {
@@ -1460,7 +1463,7 @@ sub intercepts {
         } else {
             $cn = $cc;
         }
-        printf "%10u %s\n", $ccn{$cc}, $cn;
+        printf( "%10u %s\n", $ccn{$cc}, $cn );
     }
     return 1;
 }
@@ -1486,9 +1489,13 @@ if( $cmd eq 'list' ) {
 if( $cmd eq 'intercepts' ) {
     exit !intercepts();
 }
-if( $cmd eq 'help' ) {
+if( $cmd =~ /^(?:--)?help$/ ) {
     Usage();
     exit;
 }
-print "Usage: $prog (start|stop|restart|condrestart|status|list|intercepts|help)\n";
+if( $cmd =~ /^(?:--)?version$/ ) {
+    print( "$prog version $VERSION\n" );
+    exit;
+}
+print( "Usage: $prog (start|stop|restart|condrestart|status|list|intercepts|help|version)\n" );
 exit 1;
