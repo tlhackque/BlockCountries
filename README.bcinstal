@@ -7,7 +7,7 @@ and will determine  whether all the required library modules are installed.
 Simply download the script, make it executable, and run it. 
 (No parameters are required.)
 
-If it says -Y´All needed perl modules are installed¡, block countries
+If it says 'All needed perl modules are installed', block countries
 should run (assuming that iptables is installed.)
 
 If it says that you need to install perl, it should be packaged for your 
@@ -19,10 +19,50 @@ If it says that you need to install a perl module, here is how to do this:
 
 Some distributions provide many of the modules under yum, apt-get, etc. 
 
-If yours doesn’t  or doesn’t have one that this needs, use cpan. 
-There should be a cpan command installed with Perl. Just say cpan to the 
-shell, then install modulename (like IO::Uncompress::Gunzip) and it should
-just work. ‘quit’ exits cpan.
+If yours doesn't provide modules or doesn't have one that this needs, use
+cpan. 
+  There should be a cpan command installed with Perl. Just say cpan to the 
+  shell, then install modulename (like IO::Uncompress::Gunzip) and it should
+  just work. 'quit' exits cpan.
 
 Install the module, then run bcinstall again. Repeat until bcinstall reports
-that you have all the needed modules.
+that you have all the needed modules.  Usually, this is all that is
+necessary.
+
+Note that some of these modules are shipped with the Perl core distribution.
+The others are on CPAN, though it's better to use the ones packaged by your
+distribution, as multiple update managers can confuse each-other.
+
+The library modules may depend on certain versions of Perl.  This is handled
+by the distribution update managers.  With CPAN, if you are running an older
+version of Perl, the latest version of a module may fail to install.  In
+this case, you can either have CPAN install an older compatible version of
+the module, or update Perl.
+
+Versions of Perl and library modules:
+=====================================
+
+bcinstall does NOT check the version of Perl installed on your system.
+
+  BlockCountries is known to run on Perl as early as 5.8.8, and as recent
+  as 5.12.4.  It should run on more recent releases; file bugs at
+  http://github.com/tlhackque/BlockCountries/issues if not.
+
+bcinstall does NOT check for the minimum required version of the library
+modules.  See the BlockCountries README.md for versions known to work.
+
+  Earlier versions may or may not work; use them at your own risk.  Later
+  versions should work (as long as they are compatible with your version
+  of Perl).
+
+As newer versions often fix bugs, updating is encouraged.
+If you determine that a newer version of a library module is required by
+or breaks BlockCountries, please file a bug report.
+
+Caveat:
+======
+
+If Perl is used by other software on your system, that software may
+depend on specific versions of Perl or Perl library modules.  Although
+BlockCountries should not impose incompatible dependencies, managing
+these is beyon the scope of this document.
