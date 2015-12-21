@@ -9,7 +9,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.4';
+my $VERSION = '2.5';
 
 # Copyright (c) 2010,2012, 2015 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -123,6 +123,7 @@ use Text::ParseWords;
 # 2.2       Switch to conntrack --ctstate to avoid warnings.
 # 2.3       Add support for passive mode FTP to avoid requring FTP_PASSIVE.environment variable. Make conntrack use optional under -newstate
 # 2.4       Clarify -permitonly and rule placement/priorities in help
+# 2.5       Fix uninitialized variable $cmd with no arguments.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -133,6 +134,7 @@ my $prog = basename $0;
 # Command is never in config file
 
 my $cmd = shift;
+$cmd = '' unless( defined $cmd );
 
 if( -e $CFGFILE ) {
     open( my $fh, '<', $CFGFILE ) or die( "Can't open $CFGFILE:$!" );

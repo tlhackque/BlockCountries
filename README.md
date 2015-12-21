@@ -45,6 +45,8 @@ V2.3 Make conntrack optional - older netfilters are still around
 V2.4 Documentation updates, no functional changes.
 * Clarify -permitonly and rules placement/priorities
 
+V2.5 Fix uninitialized variable when no command arguments specified.
+
 #Dependencies:
 The script uses the following Perl library modules, available
 from CPAN (or in the base Perl distribution).  Those preceeded
