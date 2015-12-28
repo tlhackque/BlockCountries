@@ -34,20 +34,23 @@ country, protocols, ports and number of attempts.
 It is a Perl script.
 
 #Latest updates:
-V2.1 Support new statistics file used by registries
 
-V2.2 Support conntrack instead of state
+V2.7 Add LSB init block
+
+V2.6 Add version command. Syntax cleanup. Corner case fix for help.
+
+V2.5 Fix uninitialized variable when no command arguments specified.
+
+V2.4 Documentation updates, no functional changes.
+* Clarify -permitonly and rules placement/priorities
 
 V2.3 Make conntrack optional - older netfilters are still around
 * Use -conntrack if you see warnings (or errors)
 * Add -passive to use passive FTP connection when getting registry data.  This usually traverses firewalls more easily.
 
-V2.4 Documentation updates, no functional changes.
-* Clarify -permitonly and rules placement/priorities
+V2.2 Support conntrack instead of state
 
-V2.5 Fix uninitialized variable when no command arguments specified.
-
-V2.6 Add version command. Syntax cleanup. Corner case fix for help.
+V2.1 Support new statistics file used by registries
 
 #Dependencies:
 The script uses the following Perl library modules, available
@@ -90,13 +93,15 @@ subchain structure is.
 
 #Installation:
 
-You may want to run bcinstall (see its README) to check for Perl and its
+You may want to run `bcinstall` (see its README) to check for Perl and its
 dependencies.
 
-Copy BlockCountries to /etc/init.d (or your distributions startup method)
-run chkconfig to include it in the autostart.
+Copy BlockCountries to `/etc/init.d` (or your distributions startup directory)
+run `chkconfig`, `systemctl enable`, `update-rc.d` (or equivalent) to
+include it in the automatic system startup.
 
-If Perl is not installed in /usr/bin, change the first line from
+If Perl is not installed in `/usr/bin`, create a softlink to it there (recommended),
+or change the first line from
 ````
 #!/usr/bin/perl
 
@@ -133,9 +138,10 @@ Add a crontab entry similar to:
 CRONJOB=1
 11 23 * * Sun /etc/init.d/BlockCountries start -update
 ````
-Please pick a different time.
+Please pick a different time.  Note that IP address allocations are fairly
+stable; updating more than once a week is rarely productive.
 
-Create /etc/sysconfig/BlockCountries and put in your configuration.
+Create `/etc/sysconfig/BlockCountries` ($CFGFILE) and put in your configuration.
 
 Here is a sample (the countries are chosen to illustrate syntax, and do not
 constitute a recommendation):
@@ -174,7 +180,7 @@ md "Moldova, Republic of"
 
 ````
 
-Run 
+Run
 ````
 BlockCountries -start -update
 ````
@@ -266,9 +272,10 @@ line\'s arguments.
 
 Use single or double-quoted strings for country names containining spaces.
 
-This script is designed to run as a service; chkconfig will link it into
-/etc/rcn.d/.  Be sure to put all configuration in $CFGFILE, since startup
-scripts only get "start" (or "stop")  as an argument.
+This script is designed to run as a service; depending on your distribution
+`chkconfig`, `update-rc.d`, or `system-ctl enable` will link it into
+`/etc/rcN.d/.`  Be sure to put all configuration in $CFGFILE,
+since startup scripts only get "start" (or "stop") as an argument.
 
 This script should also be run with start -update from a cron job - weekly
 is suggested - to obtain the latest IP address databases.  If the CRONJOB
@@ -351,4 +358,4 @@ Please raise bug reports or suggestions at http://github.com/tlhackque/BlockCoun
 
 Always include `BlockCountries version` and `perl --version`.
 
-Praise is also welcome.
+Suggestions and/or praise are also welcome.

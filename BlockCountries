@@ -6,10 +6,25 @@
 # description:  Blocks IP traffic from IP addresses assigned to specific countries
 #
 
+# Move ip6tables to Required-Start and Required-Stop if IPv6 must be in use.
+# Move iptables to Should-Start and Should-stop if IPv4 is never in use.
+
+### BEGIN INIT INFO
+# Provides: BlockCountries
+# Required-Start: $network $local_fs $remote_fs iptables
+# Required-Stop: $network $local_fs $remote_fs iptables
+# Should-Start: $syslog $named ip6tables
+# Should-Stop: $syslog $named ip6tables
+# Short-Description: start and stop BlockCountries
+# Description: Blocks IP traffic from IP addresses assigned to specific countries
+#              using iptables/ip6tables.  Updates/queries database when not run
+#              as an init script.
+### END INIT INFO
+
 use strict;
 use warnings;
 
-my $VERSION = '2.6';
+my $VERSION = '2.7';
 
 # Copyright (c) 2010,2012, 2015 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -125,6 +140,7 @@ use Text::ParseWords;
 # 2.4       Clarify -permitonly and rule placement/priorities in help
 # 2.5       Fix uninitialized variable $cmd with no arguments.
 # 2.6       Add --version commmand, syntax cleanup for print & printf.  Remove help switches due to uninitialized configuration variables.
+# 2.7       Add LSB init block.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -489,9 +505,10 @@ line\'s arguments.
 
 Use single or double-quoted strings for country names containining spaces.
 
-This script is designed to run as a service; chkconfig will link it into
-/etc/rcn.d/.  Be sure to put all configuration in $CFGFILE, since startup
-scripts only get "start" (or "stop")  as an argument.
+This script is designed to run as a service; depending on your distribution
+chkconfig, update-rc.d, or "system-ctl enable" will link it into /etc/rcN.d/.
+Be sure to put all configuration in $CFGFILE, since startup
+scripts only get "start" (or "stop") as an argument.
 
 This script should also be run with start -update from a cron job - weekly
 is suggested - to obtain the latest IP address databases.  If the CRONJOB
