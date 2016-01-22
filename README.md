@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.8 Add $LOGLEVEL to control syslog priority
+
 V2.7 Add LSB init block
 
 V2.6 Add version command. Syntax cleanup. Corner case fix for help.
