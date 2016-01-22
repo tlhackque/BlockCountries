@@ -24,7 +24,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.7';
+my $VERSION = '2.8';
 
 # Copyright (c) 2010,2012, 2015 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -74,6 +74,8 @@ my $ZONEDIR = '/root/blockips';
 my $LOGPFX = '[Blocked CC]: ';
 my $LOG = '/var/log/messages*';  # Note: This is a wildcard to handle log rotation.  .gz files will decompressed on the fly and processed.
 my $LOGPGM = 'kernel';
+my $LOGLEVEL = ''; # To force a non-default logging priority, specify here (e.g. NOTICE).  
+                   # Can be a number or name.  Leave as '' for the default. (Recommended)
 
 my %config = ( # Parameters that can vary between IPV4 and IPV6
               4 => {
@@ -1093,7 +1095,9 @@ sub start {
             # lookup each IP.
             my $limits = '';
             $limits = "-m limit --limit $loglimits[0] --limit-burst $loglimits[1] " if( @loglimits );
-            print $fh ( "-A ${NEWCHAIN}-DLOG $limits-j LOG --log-prefix \"$LOGPFX\"\n" );
+            my $loglevel = '';
+            $loglevel = " --log-level $LOGLEVEL" if( $LOGLEVEL ne '' );
+            print $fh ( "-A ${NEWCHAIN}-DLOG $limits-j LOG --log-prefix \"$LOGPFX\"$loglevel\n" );
         }
         print $fh ( "-A ${NEWCHAIN}-DLOG -j DROP\n" );
 
