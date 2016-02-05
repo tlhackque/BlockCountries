@@ -74,7 +74,7 @@ minimum that bcinstall checks for.
 #Cautions:
 
 Consider carefully whether you want to use this software and the full consequences
-to your site and\/or business.  By necessity, it will block potential customers and
+to your site and/or business.  By necessity, it will block potential customers and
 'good' connections along with villains.  You must consider the costs and benefits
 to your operation - the author does not endorse any specific policy.  In particular,
 the defaults should be viewed as examples, not value judgements.
@@ -166,7 +166,7 @@ Usage: $prog command args
   list               List available country names/codes.
                      Contacts server for list.
   intercepts [-host name] [-days n]
-                     List today\'s intercepts by host from $LOG.
+                     List today's intercepts by host from $LOG.
                      Requires -log to start.
   stop  args         Stop filtering
   restart  args      Synonym for start (reloads with no open window)
@@ -190,7 +190,7 @@ Arguments for start-class commands are:
  -6 -ipv6           Install filter for IPv6 addresses / For both, use -4 -6
  -conntrack         Use -m conntrack rather than -m state to avoid warnings from newer iptables
  -log               Install a logging rule to log rejected packets.
- -nolog             Don\'t install a logging rule. (default)
+ -nolog             Don't install a logging rule. (default)
  -nolimit           Do not limit logging (can generate huge log files if under attack; not advised)
  -limit spec        Limit logging, default = $loglimits[0]:$loglimits[1] (see man iptables "limit")
  -atport n          Allow connections to TCP port n even FROM banned addresses.
@@ -199,10 +199,10 @@ Arguments for start-class commands are:
                     May specify any number of times.  May use a service name.
  -atporto n         Same as -atport, but for connections TO banned addresses.
  -auporto n         Same as -auport, but for connections TO banned addresses.
- -aip ip(\/mask)    Allow connection from an otherwise banned IP address.
+ -aip ip(/mask)    Allow connection from an otherwise banned IP address.
                     For a block, specify a netlength or mask. A hostname may
                     also be specified.  May specify any number of times.
- -dip ip(\/mask)    Deny connections from an otherwise allowed IP address.
+ -dip ip(/mask)    Deny connections from an otherwise allowed IP address.
                     Same syntax as -aip.
  -passive           When using FTP for updates, use passive mode (traverse firewalls)
  -permitonly        Listed countries will be permited, all others denied.
@@ -211,7 +211,7 @@ Arguments for start-class commands are:
                     This is probably not required for most applications, and
                     will roughly double the memory requirements.
                     Caution: If you use -blockout for start, you must also use it for stop.
-                    This will not be a problem if it\'s in the configuration file.
+                    This will not be a problem if it's in the configuration file.
  -d                 Output random debugging messages
  -v                 Output extended status/statistics
   CC                ISO Country code or name to ban (or permit if -permitonly).
@@ -237,7 +237,7 @@ The system configuration is specified by the variables:
 The defaults are indicated above.  These variables can NOT be specified on the command line.
 
 Anything else (except comments) contained in it is prepended to every command
-line\'s arguments.
+line's arguments.
 
 Use single or double-quoted strings for country names containining spaces.
 
@@ -273,7 +273,7 @@ following order (first match determines result):
    -aips are accepted
    -dips are denied
    Country constraints deny or accept (per -permitonly)
-   IPTABLES rules later in the caller\'s chain
+   IPTABLES rules later in the caller's chain
 If a BlockCountries rule denies a connection, it will be dropped (and logged).
 If a BlockCountries rule "accepts" a connection, it is still subject to any
 IPTABLES rules that follow it.
@@ -294,7 +294,7 @@ Credits:
  Some ideas came from http://www.cyberciti.biz/faq/block-entier-country-using-iptables/.
 
  This version of the script merges all the IP address blocks; this saves over 1,000
- rules for the default banned address list.  It\'s also somewhat faster than a shell
+ rules for the default banned address list.  It's also somewhat faster than a shell
  script, and contains a more complete and polished user and system interface.  It is
  not a complete superset; at this time it does not implement file archiving (better
  left to your backup solution) nor does it implement interface selection (better done
@@ -302,23 +302,23 @@ Credits:
 
 Issues:
  Consider carefully whether you want to use this software and the full consequences
- to your site and\/or business.  By necessity, it will block potential customers and
+ to your site and/or business.  By necessity, it will block potential customers and
  'good' connections along with villains.  You must consider the costs and benefits
  to your operation - the author does not endorse any specific policy.  In particular,
  the defaults should be viewed as examples, not value judgements.
 
  Very large numbers of exception IP blocks might benefit from implementing a subchain
  structure - but that would be a rather different use model.  The known use cases
- would probably be penalized - so one would want to make a dynamic choice.  I\'d
+ would probably be penalized - so one would want to make a dynamic choice.  I'd
  want to see actual data before implementing this.
 
  The iptables-restore format is undocumented, though used by others.  It may be
  fragile.
 
- This code should use IPTables::IPv4 - but it doesn\'t currently work on my x64 system.
+ This code should use IPTables::IPv4 - but it doesn't currently work on my x64 system.
  It may be re-written to do so at some point.
 
- --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013, 17-Dec-2015
+ --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013, 17-Dec-2015, 5-Feb-2016
 ````
 
 #Bug reports and suggestions
