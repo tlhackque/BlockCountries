@@ -6,13 +6,14 @@
 # description:  Blocks IP traffic from IP addresses assigned to specific countries
 #
 
-# Move ip6tables to Required-Start and Required-Stop if IPv6 must be in use.
-# Move iptables to Should-Start and Should-stop if IPv4 is never in use.
+# iptables/ip6tables are dependencies, but aren't always registered as a service
 
 ### BEGIN INIT INFO
 # Provides: BlockCountries
-# Required-Start: $network $local_fs $remote_fs iptables
-# Required-Stop: $network $local_fs $remote_fs iptables
+# Required-Start: $network $local_fs $remote_fs
+# Required-Stop: $network $local_fs $remote_fs
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
 # Should-Start: $syslog $named ip6tables
 # Should-Stop: $syslog $named ip6tables
 # Short-Description: start and stop BlockCountries
@@ -24,7 +25,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.9';
+my $VERSION = '2.10';
 
 # Copyright (c) 2010, 2012, 2015, 2016 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -168,6 +169,7 @@ use Text::ParseWords;
 # 2.7       Add LSB init block.
 # 2.8       Add LOGLEVEL configuration option.
 # 2.9       Simplify configuration.
+# 2.10      Add Default-Start and Default-Stop to LSB block, remove iptables because it's not always considered a service.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
