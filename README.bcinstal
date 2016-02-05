@@ -63,4 +63,4 @@ Caveat:
 If Perl is used by other software on your system, that software may
 depend on specific versions of Perl or Perl library modules.  Although
 BlockCountries should not impose incompatible dependencies, managing
-these is beyon the scope of this document.
+these is beyond the scope of this document.
