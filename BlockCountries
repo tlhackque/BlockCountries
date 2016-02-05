@@ -24,9 +24,9 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.8';
+my $VERSION = '2.9';
 
-# Copyright (c) 2010,2012, 2015 Timothe Litt, litt__at__acm_dot_org
+# Copyright (c) 2010, 2012, 2015, 2016 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
 #
 # This software is licensed under the terms of the Perl
@@ -62,19 +62,33 @@ my $VERSION = '2.8';
 # See Usage() for documentation
 #
 
-# List of country codes - specify yours in the config file
+# Local configuration.  First file in @CFGFILE that exists is used.
+# The environment variable BlockCountriesCFG is consulted before this
+# list of files.  Therefore, it should NOT be necessary to edit this
+# script for any distribution.
 
-my @DEFAULT_ISO = qw /cn kr kp kz ru/;
+my @CFGFILE = qw{ ./BlockCountries
+                  ~/BlockCountries
+                  /etc/sysconfig/BlockCountries
+                  /etc/default/BlockCountries
+                  /etc/BlockCountries
+                };
 
-# Local configuration.
+# The following were previously available for customization.
+# They should be set with the corresponding variables in
+# the configuration script instead.
 
-my $CFGFILE = '/etc/sysconfig/BlockCountries';
-my $ZONEDIR = '/root/blockips';
+# my $CFGFILE = '/etc/sysconfig/BlockCountries';
 
-my $LOGPFX = '[Blocked CC]: ';
-my $LOG = '/var/log/messages*';  # Note: This is a wildcard to handle log rotation.  .gz files will decompressed on the fly and processed.
-my $LOGPGM = 'kernel';
-my $LOGLEVEL = ''; # To force a non-default logging priority, specify here (e.g. NOTICE).  
+# These can (and should) be specified in the configuration file
+# They can NOT be specified on the command line
+
+my $ZONEDIR = '/root/blockips';  # zonedir 
+
+my $LOGPFX = '[Blocked CC]: ';   # logpfx
+my $LOG = '/var/log/messages*';  # logfile Note: This is a wildcard to handle log rotation.  .gz files will decompressed on the fly and processed.
+my $LOGPGM = 'kernel';           # logpgm 
+my $LOGLEVEL = ''; # loglevel To force a non-default logging priority, specify here (e.g. NOTICE).  
                    # Can be a number or name.  Leave as '' for the default. (Recommended)
 
 my %config = ( # Parameters that can vary between IPV4 and IPV6
@@ -93,6 +107,13 @@ my %config = ( # Parameters that can vary between IPV4 and IPV6
                     FHOOK => 'FORWARD-HOOK', # Note: if this table is not found, FORWARD will be used
                    },
               );
+
+# List of country codes blocked by default - specify yours in the config file
+
+my @DEFAULT_ISO = qw /cn kr kp kz ru/;
+
+my $path = '/sbin'; # Path to iptables
+
 # ### End of configuration
 
 my %RIRS = ( # Should be stable; http: URIs would be prefered for IF_MODIFIED support
@@ -106,7 +127,9 @@ my %RIRS = ( # Should be stable; http: URIs would be prefered for IF_MODIFIED su
 # The following are either part of base perl, or available on CPAN
 # Commented-out modules are used, but not read until a command requires them.
 
+use Errno;
 use File::Basename;
+use Cwd qw/realpath/;
 use File::Path;
 #use IO::Uncompress::Gunzip;
 use Locale::Country;
@@ -143,6 +166,8 @@ use Text::ParseWords;
 # 2.5       Fix uninitialized variable $cmd with no arguments.
 # 2.6       Add --version commmand, syntax cleanup for print & printf.  Remove help switches due to uninitialized configuration variables.
 # 2.7       Add LSB init block.
+# 2.8       Add LOGLEVEL configuration option.
+# 2.9       Simplify configuration.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -155,29 +180,74 @@ my $prog = basename $0;
 my $cmd = shift;
 $cmd = '' unless( defined $cmd );
 
-if( -e $CFGFILE ) {
-    open( my $fh, '<', $CFGFILE ) or die( "Can't open $CFGFILE:$!" );
-    my @cfg;
-    while( <$fh> ) {
-        s/\s*#.*$//;
-        s/^\s+//;
-        s/\s+$//;
-        next unless length;
-        push @cfg, parse_line( '\s+', 0, $_ );
+my $currentCFGFILE;
+
+my %cfg = ( # switches only allowed in config file
+            -zonedir  => \$ZONEDIR,
+            -logpfx   => \$LOGPFX,
+            -logfile  => \$LOG,
+            -logpgm   => \$LOGPGM,
+            -loglevel => \$LOGLEVEL,
+            -path     => \$path,
+          );
+
+foreach my $CFGFILE (($ENV{BlockCountriesCFG}, @CFGFILE)) {
+    if( defined $CFGFILE && -e $CFGFILE && !-x $CFGFILE ) {
+        open( my $fh, '<', $CFGFILE ) or die( "Can't open $CFGFILE:$!" );
+        my @cfg;
+        while( <$fh> ) {
+            s/\s*#.*$//;
+            s/^\s+//;
+            s/\s+$//;
+            next unless length;
+            push @cfg, parse_line( '\s+', 0, $_ );
+        }
+        close $fh;
+        $currentCFGFILE = realpath( $CFGFILE );
+
+        # Check for immediate configuration variables and set them here
+        # These are not allowed on the command line and are set to avoid
+        # the necessity of editing this script to fit the local environment.
+
+        for( my $i = 0; $i < @cfg; ) {
+            my $arg = $cfg[$i];
+
+            if( exists $cfg{ $arg } && $i < $#cfg ) {
+                ${$cfg{$arg}} = $cfg[$i+1];
+                splice( @cfg, $i, 2 );
+            } else {
+                $i++;
+            }
+        }
+
+        # Prepend config file arguments (so command line overrides if conflict)
+
+        unshift @ARGV, @cfg;
+        last;
     }
-    # Prepend config file arguments (so command line overrides if conflict)
-    unshift @ARGV, @cfg;
-    close $fh;
 }
 
+if( $cmd eq 'config' ) {
+    unless( defined $currentCFGFILE ) {
+        print( "No configuration file found\n" );
+        exit 1;
+    }
+    print( "Configured from $currentCFGFILE\n" );
+    my $mlen = 0;
+    foreach my $item (keys %cfg) {
+        $mlen = length $item if( length $item > $mlen );
+    }
+    foreach my $item (sort keys %cfg) {
+        printf( " %-*s: \"%s\"\n", $mlen, $item, ${$cfg{$item}} );
+    }
+    exit 0;
+}
 
 # Collect all arguments here, even though they are mostly for start
 # This allows detailed status
 
-my( $debug, $verbose, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules, $ipv4, $ipv6, $conntrack, $path,
+my( $debug, $verbose, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules, $ipv4, $ipv6, $conntrack,
     @loglimits, @atports, @auports, @atportso, @auportso, @aips, @dips );
-
-$path = '/sbin';
 
 @loglimits = ( '1/minute', 10 );
 
@@ -434,6 +504,7 @@ sub Usage {
 IP filter manager for country filters version $VERSION
 
 Usage: $prog command args
+  config             Display active configuration file
   status [-v]        Display filter status.
                      -v provides configuration from config file
                      and command file - NOT iptables.
@@ -479,14 +550,14 @@ Arguments for start-class commands are:
  -dip ip(\/mask)    Deny connections from an otherwise allowed IP address.
                     Same syntax as -aip.
  -passive           When using FTP for updates, use passive mode (traverse firewalls)
- -path /sbin        Path for iptables utilities (use in $CFGFILE)
+ -path /sbin        Path for iptables utilities (use in the configuration file)
  -permitonly        Listed countries will be permited, all others denied.
-                    Put in -permitonly in $CFGFILE so status and start are consistent.
+                    Put in -permitonly in the configuration file so status and start are consistent.
  -blockout          Also generate rules to block output & forwarded-output.
                     This is probably not required for most applications, and
                     will roughly double the memory requirements.
                     Caution: If you use -blockout for start, you must also use it for stop.
-                    This will not be a problem if it\'s in $CFGFILE.
+                    This will not be a problem if it\'s in the configuration file.
  -d                 Output random debugging messages
  -v                 Output extended status/statistics
   CC                ISO Country code or name to ban (or permit if -permitonly).
@@ -499,17 +570,41 @@ HELP
 my $IPT4 = $IP{4}{IPT};
 my $IPT6 = $IP{6}{IPT};
 
+my $cfglist = join( "\n", @CFGFILE );
+
+$currentCFGFILE = "none found" unless( defined $currentCFGFILE );
+
     print( << "HELP" );
 
-Arguments may also be obtained from $CFGFILE.
-Anything (except comments) contained in it is prepended to every command
+Arguments may also be obtained from the configuration file, currently
+$currentCFGFILE.  The configuration file must be readable but not
+executable.  It is searched for in the following places. The first
+file found is used:
+
+The file specified by the environment variable BlockCountriesCFG
+$cfglist
+
+The system configuration is specified by the variables:
+ -logfile    "/var/log/messages*"  # Wildcard should include rotated/archived/.gz compressed files
+                                   # containing iptables log messages
+ -loglevel number or name          # syslog message priority.  Normally omitted. System-dependent.
+                                   # Usually 0-6 (or as names, EMERGENCY, ALERT, CRITICAL,ERROR,
+                                   # WARNING,NOTICE,INFORMATIONAL, or DEBUG)
+ -logpfx '[Blocked CC]:'           # Prefix used for log messages from BlockedCountries
+ -logpgm 'kernel'                  # Program name used by netfilter.  Always 'kernel'.
+ -path   '/sbin'                   # Path for iptables components
+ -zonedir '/root/blockips'         # Directory used to hold IP mapping data
+
+The defaults are indicated above.  These variables can NOT be specified on the command line.
+
+Anything else (except comments) contained in it is prepended to every command
 line\'s arguments.
 
 Use single or double-quoted strings for country names containining spaces.
 
 This script is designed to run as a service; depending on your distribution
 chkconfig, update-rc.d, or "system-ctl enable" will link it into /etc/rcN.d/.
-Be sure to put all configuration in $CFGFILE, since startup
+Be sure to put all configuration in the configuration file, since startup
 scripts only get "start" (or "stop") as an argument.
 
 This script should also be run with start -update from a cron job - weekly
@@ -558,7 +653,7 @@ Default -days is 1, hostname is current host.
 
 Bug reports:
  Please raise bug reports or suggestions at http://github.com/tlhackque/BlockCountries/issues.
- Always include BlockCountries version and perl --version.
+ Always include BlockCountries version, BlockCountries config, and perl --version.
  Praise is also welcome.
 
 Credits:
@@ -589,7 +684,7 @@ Issues:
  This code should use IPTables::IPv4 - but it doesn\'t currently work on my x64 system.
  It may be re-written to do so at some point.
 
- --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013, 17-Dec-2015
+ --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013, 17-Dec-2015, 5-Feb-2016
 HELP
 }
 
@@ -736,7 +831,21 @@ sub status {
 }
 
 sub list {
-    open( my $lh, '<', "$ZONEDIR/cclist.txt" ) or ( print( "Can't open index: $!\n" ), return 0 );
+    my $lh;
+
+    unless( open( $lh, '<', "$ZONEDIR/cclist.txt" ) ) {
+        unless( -e $ZONEDIR ) {
+            print( "$ZONEDIR does not exist.  Please run $prog start -update\n" );
+            return 0;
+        }
+        if( $!{ENOENT} ) {
+            print( "No data from registries found.  Run $prog start -update to initialize the zone list\n" );
+            return 0;
+        }
+        print( "Can't open index: $!\nHas $prog start -update been run?\n" );
+        return 0;
+    }
+
     my %ccs;
     while( <$lh> ) {
         chomp;
@@ -1518,5 +1627,5 @@ if( $cmd =~ /^(?:--)?version$/ ) {
     print( "$prog version $VERSION\n" );
     exit;
 }
-print( "Usage: $prog (start|stop|restart|condrestart|status|list|intercepts|help|version)\n" );
+print( "Usage: $prog (start|stop|restart|condrestart|status|list|intercepts|config|help|version)\n" );
 exit 1;

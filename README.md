@@ -3,7 +3,7 @@ BlockCountries
 
 iptables manager to block by country
 
-Copyright (C) 2010, 2012, 2013, 2015 Timothe Litt
+Copyright (C) 2010, 2012, 2013, 2015, 2016 Timothe Litt
 
 BlockCountries generates iptables and ipv6tables
 that allow blocking IP traffic based on the country
@@ -35,6 +35,10 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.9 Simplify configuration so it's not necessary to modify the script.
+     Improve documentation and packaging.  `bcinstall` checks for minimum
+     versions and iptables configuration.
+
 V2.8 Add $LOGLEVEL to control syslog priority
 
 V2.7 Add LSB init block
@@ -55,32 +59,17 @@ V2.2 Support conntrack instead of state
 V2.1 Support new statistics file used by registries
 
 #Dependencies:
-The script uses the following Perl library modules, available
-from CPAN (or in the base Perl distribution).  Those preceeded
-by # are only used if a particular command requires them.
+The script uses a number of Perl library modules, available
+from CPAN (or in the base Perl distribution).  The
+`bcinstall` bash script should be used to determine whether
+they (and Perl) are installed. 
 
-If you are unfamiliar with Perl, you may want to use the bcinstall
-bash script, which will determine whether they (and Perl) are installed.
-bcinstall will NOT verify that the minimum required version of each
-module is installed.  The versions below are known to work, but later versions
-should be used if available.  Use earlier versions at your own risk.
+`bcinstall` will also verify that the minimum required version of each
+module is installed.  Later versions should be used if available.
 
-````
-File::Basename          2.74
-File::Path              2.08
-#IO::Uncompress::Gunzip 2.064
-Locale::Country         3.17
-#LWP::Simple            6.10
-Net::IP;                1.25
-NetAddr::IP             4.044
-#Net::Domain            2.23
-#Parse::Syslog          1.10
-#POSIX                  1.09
-Regexp::IPv6            0.03
-Socket                  2.006
-Storable                2.30
-Text::ParseWords        3.27
-````
+There are known bugs that impact BlockCountries in earlier versions
+of several modules.  Don't try to use any version less than the
+minimum that bcinstall checks for.
 
 #Cautions:
 
@@ -95,45 +84,45 @@ subchain structure is.
 
 #Installation:
 
-You may want to run `bcinstall` (see its README) to check for Perl and its
-dependencies.
+Unpack the `tar.gz` or `zip` file that you downloaded from github.
+(`tar.gz` files are available from https://github.com/tlhackque/BlockCountries/releases)
+
+This will create a subdirectory named BlockCountries-<version>.
+
+cd to that directory.
+
+Run `bcinstall` (see its README) to check that Perl and its
+dependencies are installed and meet the minimum version requirements.
 
 Copy BlockCountries to `/etc/init.d` (or your distributions startup directory)
 run `chkconfig`, `systemctl enable`, `update-rc.d` (or equivalent) to
 include it in the automatic system startup.
 
-If Perl is not installed in `/usr/bin`, create a softlink to it there (recommended),
-or change the first line from
-````
-#!/usr/bin/perl
+If Perl is not installed in `/usr/bin`, create a softlink to it there,
+`bcinstall` will provide guidance.
 
-to the location of your perl interpreter
 On Unix-like systems,
 
 which perl
 
-will usually reveal the location.  The #! is required.
+will usually reveal the location.
 ````
 
-Inspect the first few lines and modify these variables for your environment:
+The file `config/BlockCountries` should be copied to your distribution's
+configuration directory, such as `/etc/sysconfig` or `/etc/default`.
 
-````
-$CFGFILE - This is where the configuration file lives
+BlockCountries looks for the configuration file in several common directories,
+Use BlockCountries help for a list. 
 
-$ZONEDIR - This is where the files that define IP assignments live.  It should
-           be a dedicated directory, must exist and must be writable by the
-           cron job.
-$LOG     - The syslog file containing iptables log entries.  Wildcard if
-           logrotation occurs.
+If you must place the configuration file in an alternate location, define
+the environment variable `BlockCountriesCFG` in all the environments where
+BlockCountries will be run.  (cron, startup, and interactive)
+This is the first file attempted.
 
-$LOGPFX  - The prefix to be written by IPtables when logging a rejection.
-$LOGPGM  - The program to be credited with writing the log entry
+Inspect the first few lines of the configuration file and modify the variables
+in Section 1 for your environment.
 
-The %config hash rarely needs adjustment; it defines where to find the iptables
-commands, and the chain names to insert the filter into.  The path to the
-commands is normally specified in the config file.
-
-````
+Verify that BlockCountries finds your file by using `BlockCountries config`
 
 Add a crontab entry similar to:
 ````
@@ -143,44 +132,6 @@ CRONJOB=1
 Please pick a different time.  Note that IP address allocations are fairly
 stable; updating more than once a week is rarely productive.
 
-Create `/etc/sysconfig/BlockCountries` ($CFGFILE) and put in your configuration.
-
-Here is a sample (the countries are chosen to illustrate syntax, and do not
-constitute a recommendation):
-
-````
-# Configuration for BlockCountries service
-
-# Countries
-#
-# The list of contry codes and names can be obtained from BlockCountries with:
-#
-#     BlockCountries list
-#
-# This lists both ISO code and name for documentation (and as insurance against changes in the name)
-# However, either would do.
-lt Lithuania
-md "Moldova, Republic of"
-
-# Allow inbound mail, which requires DNS
-#
-
--atport -atport smtp -atport submission -atport smtps -atport domain
--auport domain
-
-# Filter both IPV4 and IPV6
-
--ipv4 -ipv6
-
-# Enable logging
-
--log
-
-# Path to iptables command
-
--path /usr/local/sbin
-
-````
 
 Run
 ````
@@ -202,13 +153,14 @@ $prog help
 The following usage provides an introduction to BlockCountries.
 
 Please do not use this version of the usage to configure BlockCountries
-for prodution; use the version from the `help` command, which is
+for production; use the version from the `help` command, which is
 always up-to-date with the latest functions and clarifications.
 
 ````
 IP filter manager for country filters
 
 Usage: $prog command args
+  config             Display active configuration file
   status [-v]        Display filter status.
                      -v provides configuration from config file
                      and command file - NOT iptables.
@@ -254,29 +206,45 @@ Arguments for start-class commands are:
  -dip ip(\/mask)    Deny connections from an otherwise allowed IP address.
                     Same syntax as -aip.
  -passive           When using FTP for updates, use passive mode (traverse firewalls)
- -path /sbin        Path for iptables utilities (use in $CFGFILE)
  -permitonly        Listed countries will be permited, all others denied.
-                    Put in -permitonly in $CFGFILE so status and start are consistent.
+                    Put in -permitonly in the configuration file so status and start are consistent.
  -blockout          Also generate rules to block output & forwarded-output.
                     This is probably not required for most applications, and
                     will roughly double the memory requirements.
                     Caution: If you use -blockout for start, you must also use it for stop.
-                    This will not be a problem if it\'s in $CFGFILE.
+                    This will not be a problem if it\'s in the configuration file.
  -d                 Output random debugging messages
  -v                 Output extended status/statistics
   CC                ISO Country code or name to ban (or permit if -permitonly).
                     Specify as many as you like.
                     Default list:
 
-Arguments may also be obtained from $CFGFILE.
-Anything (except comments) contained in it is prepended to every command
+Arguments may also be obtained from the configuration file,
+The configuration file must be readable but not
+executable.  It is searched for in a number of places. See
+BlockCountries help for a list.  The first file found is used:
+
+The system configuration is specified by the variables:
+ -logfile    "/var/log/messages*"  # Wildcard should include rotated/archived/.gz compressed files
+                                   # containing iptables log messages
+ -loglevel number or name          # syslog message priority.  Normally omitted. System-dependent.
+                                   # Usually 0-6 (or as names, EMERGENCY, ALERT, CRITICAL,ERROR,
+                                   # WARNING,NOTICE,INFORMATIONAL, or DEBUG)
+ -logpfx '[Blocked CC]:'           # Prefix used for log messages from BlockedCountries
+ -logpgm 'kernel'                  # Program name used by netfilter.  Always 'kernel'.
+ -path   '/sbin'                   # Path for iptables components
+ -zonedir '/root/blockips'         # Directory used to hold IP mapping data
+
+The defaults are indicated above.  These variables can NOT be specified on the command line.
+
+Anything else (except comments) contained in it is prepended to every command
 line\'s arguments.
 
 Use single or double-quoted strings for country names containining spaces.
 
 This script is designed to run as a service; depending on your distribution
 `chkconfig`, `update-rc.d`, or `system-ctl enable` will link it into
-`/etc/rcN.d/.`  Be sure to put all configuration in $CFGFILE,
+`/etc/rcN.d/.`  Be sure to put all configuration in the configuration file,
 since startup scripts only get "start" (or "stop") as an argument.
 
 This script should also be run with start -update from a cron job - weekly
@@ -358,6 +326,6 @@ Issues:
 
 Please raise bug reports or suggestions at http://github.com/tlhackque/BlockCountries/issues.
 
-Always include `BlockCountries version` and `perl --version`.
+Always include `BlockCountries version` `BlockCOuntries config`, and `perl --version`.
 
 Suggestions and/or praise are also welcome.

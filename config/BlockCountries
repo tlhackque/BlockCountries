@@ -1,0 +1,85 @@
+# Configuration for BlockCountries service
+#
+# This file is a sample configuration provided to illustrate syntax.
+#
+# It is not a recommendation for which countries to block.
+
+# ******** Section 1 ********
+# System configuration variables
+#  Note: These are not valid on the command line
+#
+# Sylog file where log messages can be found.  This does NOT control where they are
+# placed - see the man page for syslog, or for more powerful placement options, rsyslogd
+#
+# This is a wildcard specification that should include any rotated/archived logfiles.
+# .gz files can be processed.
+#
+-logfile "/var/log/messages*"
+
+# Directory where country/zone data is stored.  Must be writable, will be created if missing.
+#
+-zonedir '/root/blockips'
+
+# *** Remainder of this section rarely needs to be changed ***
+
+# Path to iptables command
+
+-path /sbin
+
+# Prefix used for log messages from BlockCountries
+# Can be used to filter log file with other tools
+#
+-logpfx '[Blocked CC]:'
+
+# Log level (priority) - should be left blank, but some people attempt to filter syslog
+# by priority.  The values are system-dependent, but usually: 0-6 (or as names, 
+# EMERGENCY, ALERT, CRITICAL,ERROR,WARNING,NOTICE,INFORMATIONAL, or DEBUG)
+
+-loglevel ''
+
+# Program name used by netfilter to write log messages.  In all known cases, this is 'kernel'.
+
+-logpgm 'kernel'
+
+# ******** Section 2 ********
+
+# Countries
+#
+# The list of contry codes and names can be obtained from BlockCountries with:
+#
+#     BlockCountries list
+#
+# This lists both ISO code and name for documentation (and as insurance against changes in the name)
+# It is not necessary to specify both.  The following are equivalent:
+#
+# lt Lithunia
+# Lithunia
+# lt
+
+lt Lithuania
+md "Moldova, Republic of"
+
+# ******** Section 3 ********
+
+# Exceptions
+
+# Allow inbound mail, which requires DNS
+#
+
+-atport smtp -atport submission -atport smtps -atport domain
+-auport domain
+
+# ******** Section 4 ********
+
+# Miscellaneous
+
+# Filter both IPV4 and IPV6
+
+-ipv4 -ipv6
+
+# Enable logging
+
+-log
+
+# Use passive mode FTP when retrieving data
+-passive
