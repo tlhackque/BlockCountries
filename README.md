@@ -106,7 +106,6 @@ On Unix-like systems,
 which perl
 
 will usually reveal the location.
-````
 
 The file `config/BlockCountries` should be copied to your distribution's
 configuration directory, such as `/etc/sysconfig` or `/etc/default`.
