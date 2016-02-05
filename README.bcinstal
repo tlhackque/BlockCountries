@@ -42,18 +42,16 @@ the module, or update Perl.
 Versions of Perl and library modules:
 =====================================
 
-bcinstall does NOT check the version of Perl installed on your system.
+bcinstall checks the version of Perl installed on your system.
 
-  BlockCountries is known to run on Perl as early as 5.8.8, and as recent
-  as 5.12.4.  It should run on more recent releases; file bugs at
-  http://github.com/tlhackque/BlockCountries/issues if not.
+BlockCountries is known to run on Perl as early as 5.8.8, and as recent
+as 5.12.4.  It should run on more recent releases; file bugs at
+http://github.com/tlhackque/BlockCountries/issues if not.
 
-bcinstall does NOT check for the minimum required version of the library
-modules.  See the BlockCountries README.md for versions known to work.
 
-  Earlier versions may or may not work; use them at your own risk.  Later
-  versions should work (as long as they are compatible with your version
-  of Perl).
+bcinstall also checks the version of each library module.  The
+minimums are fairly conservative.  However, in many cases earlier
+versions have bugs that break BlockCountries.
 
 As newer versions often fix bugs, updating is encouraged.
 If you determine that a newer version of a library module is required by

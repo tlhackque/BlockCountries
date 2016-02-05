@@ -7,29 +7,68 @@ fi
 
 function needs {
     m="$1"
-    if ! perl -m"$m" -e'exit;' >/dev/null 2>&1 ; then
-        echo "You need to install the perl module $m"
+    v="$2"
+    if ! perl -M"$m $v" -e'exit;' >/dev/null 2>&1 ; then
+        if [ -z "$v" ]; then
+            echo "Perl version $m is required"
+            exit 1
+        fi
+        echo "You need to install the perl module $m (minimum version $v)"
         echo "Fetch it from your distribution or from cpan"
         exit 1
     fi
     return 0
 }
 
-needs File::Basename
-needs File::Path
-needs IO::Uncompress::Gunzip
-needs Locale::Country
-needs LWP::Simple
-needs Net::IP
-needs NetAddr::IP
-needs Net::Domain
-needs Parse::Syslog
-needs POSIX
-needs Regexp::IPv6
-needs Socket
-needs Storable
-needs Text::ParseWords
+
+needs                         5.008008 # Perl version
+needs Errno                   1.0901
+needs File::Basename          2.74
+needs Cwd                     3.60
+needs File::Path              2.08
+needs IO::Uncompress::Gunzip 2.064
+needs Locale::Country         3.17
+needs LWP::Simple            6.10
+needs Net::IP                1.25
+needs NetAddr::IP             4.044
+needs Net::Domain            2.23
+needs Parse::Syslog          1.10
+needs POSIX                  1.09
+needs Regexp::IPv6            0.03
+needs Socket                  2.006
+needs Storable                2.30
+needs Text::ParseWords        3.27
 
 echo "All needed perl modules are installed"
+
+if ! which iptables >/dev/null 2>&1 ; then
+    echo "You need to install iptables"
+    exit 1
+fi
+
+path="`which iptables`"
+
+path="`dirname $path`"
+
+echo "iptables found in $path"
+
+for ipt in iptables-restore ip6tables ip6tables-restore; do
+    iptpath="`which $ipt`"
+
+    iptpath="`dirname $iptpath`"
+
+    echo "$ipt found in $iptpath"
+
+    if [ "$iptpath" != "$path" ]; then
+        echo "$ipt must be in the same path as iptables"
+        exit 1
+    fi
+done
+
+if [ "$path" != '/sbin' ]; then
+    echo ""
+    echo "Be sure to include \"-path $path\" in your configuration file"
+fi
+
 
 exit 0
