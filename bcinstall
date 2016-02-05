@@ -5,6 +5,10 @@ if ! which perl > /dev/null 2>&1 ; then
     exit 1
 fi
 
+ppath="`which perl`"
+ppath="`dirname $ppath`"
+echo "Perl was found in $ppath"
+
 function needs {
     m="$1"
     v="$2"
@@ -65,10 +69,14 @@ for ipt in iptables-restore ip6tables ip6tables-restore; do
     fi
 done
 
+
 if [ "$path" != '/sbin' ]; then
     echo ""
     echo "Be sure to include \"-path $path\" in your configuration file"
 fi
 
+if [ "`readlink -f $ppath/perl`" != "`readlink -f /usr/bin/perl`" ]; then
+    echo "You must create a symbolic link from /usr/bin/perl to `readlink -f $ppath/perl`"
+fi
 
 exit 0
