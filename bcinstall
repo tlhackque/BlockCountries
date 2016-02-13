@@ -1,13 +1,22 @@
 #!/bin/bash
 
 if ! which perl > /dev/null 2>&1 ; then
-    echo "You need to install perl"
+    echo "You need to install Perl, from your distribution, or see https://www.perl.org"
     exit 1
 fi
 
 ppath="`which perl`"
 ppath="`dirname $ppath`"
-echo "Perl was found in $ppath"
+echo "Perl version `perl -e'printf \"%vd\", \$^V'` was found in $ppath"
+
+if ! which tee > /dev/null 2>&1 ; then
+    echo "You need to install tee (core OS command, part of the GNU coreutils package)"
+    exit 1
+fi
+
+tpath="`which tee`"
+tpath="`dirname $tpath`"
+echo "`tee --version | head -n 1` was found in $tpath"
 
 function needs {
     m="$1"
@@ -15,24 +24,38 @@ function needs {
     if ! perl -M"$m $v" -e'exit;' >/dev/null 2>&1 ; then
         if [ -z "$v" ]; then
             echo "Perl version $m is required"
-            exit 1
+            OK=
+            NEWPERL="$m"
+            return 1
         fi
-        echo "You need to install the perl module $m (minimum version $v)"
-        echo "Fetch it from your distribution or from cpan"
-        exit 1
+        if perl -M"$m" -e'exit;' >/dev/null 2>&1 ; then
+            perl -M$m -e"print \"Perl module $m must be upgraded from version \$$m::VERSION to at least version $v\n\";exit;"
+            OK=
+            CPAN="$CPAN $m"
+            return 1
+        fi
+        echo "Perl module $m (minimum version $v) must be installed"
+        OK=
+        CPAN="$CPAN $m"
+        return 1
     fi
     return 0
 }
 
+OK=1
+CPAN=
+NEWPERL=
+
+echo ""
 
 needs                         5.008008 # Perl version
 needs Errno                   1.0901
 needs File::Basename          2.74
-needs Cwd                     3.60
+needs Cwd                     3.33
 needs File::Path              2.08
-needs IO::Uncompress::Gunzip 2.064
-needs Locale::Country         3.17
-needs LWP::Simple            6.10
+needs IO::Uncompress::Gunzip  2.064
+needs Locale::Country         3.37
+needs LWP::Simple            6.00
 needs Net::IP                1.25
 needs NetAddr::IP             4.044
 needs Net::Domain            2.23
@@ -43,7 +66,29 @@ needs Socket                  2.006
 needs Storable                2.30
 needs Text::ParseWords        3.27
 
-echo "All needed perl modules are installed"
+if [ -n "$OK" ]; then
+    echo "All needed perl modules are installed and meet minimum version requirements"
+else
+    echo ""
+    if [ -n "$NEWPERL" ]; then
+        echo "Perl $NEWPERL must be installed from your distribution, or https://www.perl.org"
+        echo "After upgrading Perl, re-run bcinstall"
+        exit 1
+    fi
+    echo "If Perl was installed as a package, you should get these modules from your package distribution if possible."
+    echo "For Linux distributions, you would use apt-get, yum install or equivalent"
+    echo "If Perl was installed from source, or your package distribution doesn't have these modules, get them from CPAN."
+        if [ -n"$CPAN" ]; then
+        if which cpan > /dev/null 2>&1 ; then
+            echo "If you need to get them from CPAN, the cpan install command is:"
+            echo "    cpan install$CPAN"
+            echo "You can also visit https://search.cpan.org to download them manually."
+        else
+            echo "The cpan command is not installed.  Visit https://search.cpan.org to download them manually."
+        fi
+    fi
+    exit 1;
+fi
 
 if ! which iptables >/dev/null 2>&1 ; then
     echo "You need to install iptables"
@@ -54,15 +99,19 @@ path="`which iptables`"
 
 path="`dirname $path`"
 
-echo "iptables found in $path"
+echo ""
+
+echo "`iptables --version` found in $path"
+echo "`ip6tables --version` found in $path"
 
 for ipt in iptables-restore ip6tables ip6tables-restore; do
     iptpath="`which $ipt`"
 
     iptpath="`dirname $iptpath`"
 
-    echo "$ipt found in $iptpath"
-
+    if [ "$ipt"!="iptables" ] && [ "$ipt"!="ip6tables" ]; then
+        echo "$ipt found in $iptpath"
+    fi
     if [ "$iptpath" != "$path" ]; then
         echo "$ipt must be in the same path as iptables"
         exit 1
@@ -76,7 +125,11 @@ if [ "$path" != '/sbin' ]; then
 fi
 
 if [ "`readlink -f $ppath/perl`" != "`readlink -f /usr/bin/perl`" ]; then
+    echo ""
     echo "You must create a symbolic link from /usr/bin/perl to `readlink -f $ppath/perl`"
 fi
+
+echo ""
+echo "All checks completed successfully"
 
 exit 0

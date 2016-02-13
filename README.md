@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.11 Improve debug logging.  `bcinstall` reports all problems at once, provides more detail.
+
 V2.10 Add Default-Start and Default-Stop to LSB block
 
 V2.9 Simplify configuration so it's not necessary to modify the script.
