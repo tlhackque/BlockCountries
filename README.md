@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.12 Rewrite debug logging and gather more data for debugging.
+
 V2.11 Improve debug logging.  `bcinstall` reports all problems at once, provides more detail.
 
 V2.10 Add Default-Start and Default-Stop to LSB block
@@ -65,8 +67,9 @@ V2.1 Support new statistics file used by registries
 #Dependencies:
 The script uses a number of Perl library modules, available
 from CPAN (or in the base Perl distribution).  The
-`bcinstall` bash script should be used to determine whether
-they (and Perl) are installed. 
+`bcinstall` bash script should be used whenever a new version of
+`BlockCountries` is installed to determine whether they (and Perl)
+are installed.
 
 `bcinstall` will also verify that the minimum required version of each
 module is installed.  Later versions should be used if available.

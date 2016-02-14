@@ -9,14 +9,16 @@ ppath="`which perl`"
 ppath="`dirname $ppath`"
 echo "Perl version `perl -e'printf \"%vd\", \$^V'` was found in $ppath"
 
-if ! which tee > /dev/null 2>&1 ; then
-    echo "You need to install tee (core OS command, part of the GNU coreutils package)"
-    exit 1
-fi
+if [ -z "NOTNEEDED" ] ; then
+    if ! which tee > /dev/null 2>&1 ; then
+        echo "You need to install tee (core OS command, part of the GNU coreutils package)"
+        exit 1
+    fi
 
-tpath="`which tee`"
-tpath="`dirname $tpath`"
-echo "`tee --version | head -n 1` was found in $tpath"
+    tpath="`which tee`"
+    tpath="`dirname $tpath`"
+    echo "`tee --version | head -n 1` was found in $tpath"
+fi
 
 function needs {
     m="$1"
@@ -51,20 +53,24 @@ echo ""
 needs                         5.008008 # Perl version
 needs Errno                   1.0901
 needs File::Basename          2.74
+needs Carp                    1.3301
 needs Cwd                     3.33
 needs File::Path              2.08
+needs File::Temp              0.2304
+needs Fcntl                   1.05
 needs IO::Uncompress::Gunzip  2.064
 needs Locale::Country         3.37
-needs LWP::Simple            6.00
+needs LWP::Simple             6.00
 needs Net::IP                1.25
-needs NetAddr::IP             4.044
+needs NetAddr::IP            4.044
 needs Net::Domain            2.23
 needs Parse::Syslog          1.10
 needs POSIX                  1.09
-needs Regexp::IPv6            0.03
-needs Socket                  2.006
-needs Storable                2.30
-needs Text::ParseWords        3.27
+needs Regexp::IPv6           0.03
+needs Socket                 2.006
+needs Storable               2.30
+needs Symbol                 1.06
+needs Text::ParseWords       3.27
 
 if [ -n "$OK" ]; then
     echo "All needed perl modules are installed and meet minimum version requirements"

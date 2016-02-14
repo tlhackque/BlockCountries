@@ -25,7 +25,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.11';
+my $VERSION = '2.12';
 
 # Copyright (c) 2010, 2012, 2015, 2016 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -99,6 +99,9 @@ my %config = ( # Parameters that can vary between IPV4 and IPV6
                     IHOOK => 'INPUT-HOOK',   # Note: if this table is not found, INPUT will be used
                     OHOOK => 'OUTPUT-HOOK',  # Note: if this table is not found, OUTPUT will be used
                     FHOOK => 'FORWARD-HOOK', # Note: if this table is not found, FORWARD will be used
+                    table_names => '/proc/net/ip_tables_names',
+                    table_targets => '/proc/net/ip_tables_targets',
+                    table_matches => '/proc/net/ip_tables_matches',
                    },
               6 => {
                     IPT => '$path/ip6tables',
@@ -106,6 +109,9 @@ my %config = ( # Parameters that can vary between IPV4 and IPV6
                     IHOOK => 'INPUT-HOOK',   # Note: if this table is not found, INPUT will be used
                     OHOOK => 'OUTPUT-HOOK',  # Note: if this table is not found, OUTPUT will be used
                     FHOOK => 'FORWARD-HOOK', # Note: if this table is not found, FORWARD will be used
+                    table_names => '/proc/net/ip6_tables_names',
+                    table_targets => '/proc/net/ip6_tables_targets',
+                    table_matches => '/proc/net/ip6_tables_matches',
                    },
               );
 
@@ -130,11 +136,14 @@ my %RIRS = ( # Should be stable; http: URIs would be prefered for IF_MODIFIED su
 
 use Errno;
 use File::Basename;
+use Carp;
 use Cwd qw/realpath/;
 use File::Path;
+#use File::Temp;
 #use IO::Uncompress::Gunzip;
 use Locale::Country;
 #use LWP::Simple;
+#use Fcntl qw(:seek);
 use Net::IP;
 use NetAddr::IP qw(:lower);
 #use Net::Domain;
@@ -171,6 +180,7 @@ use Text::ParseWords;
 # 2.9       Simplify configuration.
 # 2.10      Add Default-Start and Default-Stop to LSB block, remove iptables because it's not always considered a service.
 # 2.11      Debug logging improvement: Append to STDERR when starting second filter.
+# 2.12      Rewrite debug logging and gather system data to assist diagnosing problems.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -182,6 +192,8 @@ my $prog = basename $0;
 
 my $cmd = shift;
 $cmd = '' unless( defined $cmd );
+
+my $argc = @ARGV;
 
 my $currentCFGFILE;
 
@@ -230,20 +242,26 @@ foreach my $CFGFILE (($ENV{BlockCountriesCFG}, @CFGFILE)) {
     }
 }
 
-if( $cmd eq 'config' ) {
+sub config {
+    my $fh = shift;
+
     unless( defined $currentCFGFILE ) {
-        print( "No configuration file found\n" );
-        exit 1;
+        print $fh ( "No configuration file found\n" );
+        return 1;
     }
-    print( "Configured from $currentCFGFILE\n" );
+    print $fh ( "Configured from $currentCFGFILE\n" );
     my $mlen = 0;
     foreach my $item (keys %cfg) {
         $mlen = length $item if( length $item > $mlen );
     }
     foreach my $item (sort keys %cfg) {
-        printf( " %-*s: \"%s\"\n", $mlen, $item, ${$cfg{$item}} );
+        printf $fh ( " %-*s: \"%s\"\n", $mlen, $item, ${$cfg{$item}} );
     }
-    exit 0;
+    return 0;
+}
+
+if( $cmd eq 'config' ) {
+    exit( config( \*STDOUT ) );
 }
 
 # Collect all arguments here, even though they are mostly for start
@@ -253,8 +271,6 @@ my( $debug, $verbose, @iso, %iso, $update, $log, $days, $host, $permitonly, $out
     @loglimits, @atports, @auports, @atportso, @auportso, @aips, @dips );
 
 @loglimits = ( '1/minute', 10 );
-
-my $appendTee = '';
 
 # Parse port number or name
 
@@ -304,6 +320,7 @@ sub gip {
 }
 
 # Loop over $ARGV
+my @argv = @ARGV;
 
 while( (my $arg = shift) ) {
     if( $arg =~ /^-/ ) {
@@ -432,6 +449,22 @@ while( (my $arg = shift) ) {
     }
 }
 
+printf STDERR ( "Starting version $VERSION on %sExecuting %s\n\n", `date +'%A %e-%b-%Y %T %Z'`, join(' ', map {
+    my $t = $_;
+
+    my $qq = $t =~ s/(["\$`\\])/\\$1/g || $t =~ /\s/;
+    $qq ||= $t =~ s/([[:^print:]])/'\\c' . chr( ord( 'A' ) - ord( "\cA" ) + ord( $1 ) )/ge;
+    $qq? qq("$t") : $t
+                                         } ( $0, ( splice( @argv, 0, @ARGV - $argc ), $cmd, splice( @argv, -$argc ) ) ) ) ) if( $debug );
+@argv = ();
+
+END {
+    printf STDERR ( "\n-------------------------------------------\nComplete on %s", `date +'%A %e-%b-%Y %T %Z'` )
+        if( $debug );
+}
+
+my( $ifcfgDone, $unameDone );
+
 if( !defined $ipv4 && !defined $ipv6 ) {
     $ipv4 = 1;
 }
@@ -482,7 +515,7 @@ my %IP = (
                     }
                 }
             } elsif( $line =~ /^(BLOCKCC0-[^\s]+)\s/ ) {
-                die "Bad table format at $.\n" unless( defined $chain );
+                die( "Bad table format at $.\n" ) unless( defined $chain );
                 if( $chain =~ $HOOK ) {
                     @chains = ( 'BLOCKCC1', 'BLOCKCC0' ); # CC0 is active, make 1 new
                 }
@@ -746,7 +779,7 @@ sub running {
             if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) {
                 $chain = $1;
             } elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) {
-                die "Bad table format at $.\n" unless( defined $chain );
+                die( "Bad table format at $.\n" ) unless( defined $chain );
                 if( $chain =~ $HOOK ) {
                     $run{$ipv->{VERSION}}{$txt{$1}} = 1;
                 }
@@ -872,12 +905,53 @@ sub startUpdate( $ ) {
     my $ipv = shift;
 
     my $iptr = $ipv->{IPTR};
+
+    tie( my $fh, 'BC::IO', $debug,  '|-', $iptr,  '-n' ) or ( print( "Unable to run $iptr: $!\n" ), return undef );
+
     if( $debug ) {
-        $iptr = "tee ${appendTee}/dev/fd/2 | $iptr";
-        $appendTee = '-a ';
+        if( $ENV{PATH} ) {
+            foreach my $dir (split( /:/, $ENV{PATH} )) {
+                my $ifp;
+                if( !$ifcfgDone && ( -x ($ifp = "$dir/ifconfig") || -x ($ifp = "$dir/ip") ) ) {
+                    $ifcfgDone = 1;
+                    $ifp .= ' a' if( $ifp =~ m,/ip$, );
+                    $fh->log( "%s\n%s\n", $ifp, '-' x length $ifp );
+                    if( open( my $ifc, '-|', "$ifp 2>&1" ) ) {
+                        while( <$ifc> ) {
+                            $fh->log( $_ );
+                        }
+                        close( $ifc );
+                    } else {
+                        $fh->log( "Unable to run $ifp: ($?) $!\n" );
+                    }
+                    $fh->log( "\n" );
+                }
+                if( !$unameDone && -x "$dir/uname" ) {
+                    $unameDone = 1;
+                    $fh->log( "uname -a\n--------\n" );
+                    if( open( my $unm, '-|', "uname -a 2>&1" ) ) {
+                        while( <$unm> ) {
+                            $fh->log( $_ );
+                        }
+                        close( $unm );
+                    } else {
+                        $fh->log( "Unable to run $dir/uname: ($?) $!\n" );
+                    }
+                    $fh->log( "\n" );
+                }
+            }
+        }
+
+        $fh->log( "\nCurrent IPv%u rules\n------------------\n\n", $ipv->{VERSION} );
+        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or ( die( $ipv->{IPT} . ": ($?) $!\n" ) );
+        while( <$ipt> ) {
+            $fh->log( $_ );
+        }
+        close( $ipt );
+
+        $fh->log( "\nGenerating rules for %s\n---------------------%s\n", $iptr, '-' x length( $iptr ) );
     }
 
-    open( my $fh, '|-', $iptr . " -n" ) or ( print( $iptr . ": $!\n"), return undef );
     print $fh ( "*filter\n" );
 
     return $fh;
@@ -887,7 +961,28 @@ sub commitUpdate( $$ ) {
     my( $fh, $ipv ) = @_;
 
     print $fh ( "COMMIT\n" );
-    close $fh or die "Table update failed: $?\n";
+    unless( close $fh ) {
+        my $reason = '';
+        $reason .= sprintf( " killed by signal %u", $? & 127 ) if( $? & 127 );
+        $reason .= sprintf( " exit code %d", $? >> 8 ) if( $? >> 8 );
+        $reason .= " core dumped" if( $> & 128 );
+        $reason = " $!" unless( $reason );
+
+        $reason = 'Rules update failed:' . "$reason\n";
+        die( $reason );
+
+        return 0;
+    }
+
+    if( $debug ) {
+        $fh->log( "\n----------------------\nRules update succeeded\n----------------------\n\n" .
+                  "New IPv%u rules\n--------------\n\n", $ipv->{VERSION} );
+        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or ( die( $ipv->{IPT} . ": ($?) $!\n" ) );
+        while( <$ipt> ) {
+            $fh->log( $_ );
+        }
+        close( $ipt );
+    }
 
     return 1;
 }
@@ -921,7 +1016,7 @@ sub deleterules( $\%$$)  {
 
     my $chain;
 
-    open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( die $ipv->{IPT} . ": $!\n" );
+    open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( die( $ipv->{IPT} . ": $!\n" ) );
 
     my( $i, $o, $f ) = ( $ipv->{IHOOK}, $ipv->{OHOOK}, $ipv->{FHOOK}, );
     my $HOOK = qr/^(?:$i|$o|$f)$/;
@@ -936,7 +1031,7 @@ sub deleterules( $\%$$)  {
                 print $fh ( "-F $chain\n" );
             }
         } elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) { # BLOCKCC1-I all -- 0.0.0.0/0  0.0.0.0/0
-            die "Bad table format at $.\n" unless( defined $chain );
+            die( "Bad table format at $.\n" ) unless( defined $chain );
             my $target = $1;
             if( $chain =~ $HOOK ) { # Remove each rule in every hook that calls our chain
                 # Must not defchain a hook as it will (mysteriously) empty it,
@@ -1165,6 +1260,8 @@ sub start {
         }
     }
 
+    print( "\n" ) if( $debug );
+
     # Generate the tables for each protocol
 
     for my $ipv (values %IP) {
@@ -1189,7 +1286,6 @@ sub start {
         next unless( $inaddrs );
 
         @addresses = sort ipcmp NetAddr::IP::Compact(@addresses);
-
 
         # Generate iptables-restore data
 
@@ -1606,18 +1702,36 @@ sub intercepts {
     return 1;
 }
 
-if( $cmd eq 'start' ) {
-    exit !start();
+if( $debug ) {
+    if( config( \*STDERR ) == 0 ) {
+        if( open( my $fh, '<', $currentCFGFILE ) ) {
+            print STDERR ( "Configuration file\n------------------\n" );
+            while( <$fh> ) {
+                print STDERR ( "    $_" );
+            }
+            close( $fh );
+            print STDERR ( '-' x 80, "\n" );
+        }
+    }
+    foreach my $ipv (sort values %IP) {
+        printf STDERR ( "\nIPv%s configuration:\n------------------\n", $ipv->{VERSION} );
+        foreach my $item (sort keys %$ipv) {
+            next if( $item eq 'VERSION' );
+            printf STDERR ( "  %-10s: %s", $item, $ipv->{$item} );
+            if( $item =~ /^table_/ ) {
+                if( -r $ipv->{$item} && open( my $f, '<', $ipv->{$item} ) ) {
+                    local $/;
+                    my %h = map { $_ => 1 } split( /\s+/, <$f> );
+                    print STDERR ( ' => ', join( ', ', sort keys %h ) );
+                    close $f;
+                }
+            }
+            print STDERR ( "\n" );
+        }
+    }
+    printf STDERR ( "\n" );
 }
-if( $cmd eq 'stop' ) {
-    exit !stop();
-}
-if( $cmd eq 'restart' ) {
-    exit !restart();
-}
-if( $cmd eq 'condrestart' ) {
-    exit !(running && restart());
-}
+
 if( $cmd eq 'status' ) {
     exit !status();
 }
@@ -1635,5 +1749,229 @@ if( $cmd =~ /^(?:--)?version$/ ) {
     print( "$prog version $VERSION\n" );
     exit;
 }
+
+if( $debug && -t STDERR ) {
+    printf( "**** COMMAND WILL NOT BE EXECUTED ****\nLarge output is expected, please add %u>file.log to capture\ ****n",
+            fileno( STDERR ) );
+    exit 1;
+}
+
+if( $cmd eq 'start' ) {
+    exit !start();
+}
+if( $cmd eq 'stop' ) {
+    exit !stop();
+}
+if( $cmd eq 'restart' ) {
+    exit !restart();
+}
+if( $cmd eq 'condrestart' ) {
+    exit !(running && restart());
+}
 print( "Usage: $prog (start|stop|restart|condrestart|status|list|intercepts|config|help|version)\n" );
 exit 1;
+
+# IO Package to enable logging
+#
+# tie( my $fh, 'BC::IO', $debug, openmode, @openargs ) or die $!;
+#
+# If $debug is true, everything read or written is logged to a temp file, which is
+# printed on STDERR when $fh is closed or destroyed.
+
+package BC::IO;
+
+use warnings;
+use strict;
+
+use Carp;
+
+sub TIESCALAR {
+    my $class = shift;
+
+    require Symbol;
+
+    my $self = Symbol::gensym();
+
+    bless( $self, $class );
+
+    $class .= '::Handle';
+
+    $$$self = tie( *$$self, $class, @_ ) or return;
+
+    return $self;
+}
+
+sub log {
+    my $self = shift;
+
+    return $$$self->log( @_ );
+}
+
+sub FETCH {
+    my $self = shift;
+
+    return \*$$self;
+}
+
+sub STORE {
+    croak( "Store into read-only handle\n" );
+    ${ $_[0] } = $_[1];
+}
+
+package BC::IO::Handle;
+
+use warnings;
+use strict;
+
+use Carp;
+use Fcntl qw(:seek);
+
+sub TIEHANDLE {
+    my $class = shift;
+
+    my $debug = shift;
+    my $mode = shift;
+
+    require Symbol;
+
+    my $self = Symbol::gensym();
+
+    open( $self, $mode, @_ ) or return;
+
+    bless( $self, $class );
+
+    if( $debug ) {
+        require File::Temp;
+
+        $$self->{tmp} = File::Temp->new( UNLINK => 1 );
+    }
+
+    $$self->{writing} = 1 if( $mode =~ />|(?:^|)/ );
+
+    return $self;
+}
+
+sub OPEN {
+    my $self = shift;
+
+    my $mode = shift;
+
+    $self->CLOSE;
+
+    open( $self, $mode, @_ ) or return;
+
+    return 1;
+}
+
+sub BINMODE {
+    my $self = shift;
+    my $io = shift || ':raw';
+
+    binmode $$self->{tmp}, $io if( exists $$self->{tmp} );
+
+    return binmode( $self, $io );
+}
+
+sub FILENO {
+    my $self = shift;
+
+    return fileno( $self );
+}
+
+sub PRINT {
+    my $self = shift;
+
+    croak( "Write to read-only handle\n" ) unless( $$self->{writing} );
+
+    print { $$self->{tmp} } ( @_ ) if( exists $$self->{tmp} );
+
+    return print $self ( @_ );
+}
+
+sub log {
+    my $self = shift;
+    my $fmt = shift;
+
+    return printf { $$self->{tmp} } ( $fmt, @_ ) if( exists $$self->{tmp} );
+}
+
+sub PRINTF {
+    my $self = shift;
+    my $fmt = shift;
+
+    return $self->PRINT( sprintf( $fmt, @_ ) );
+}
+
+sub WRITE {
+    my $self = shift;
+
+    croak( "Write to read-only handle\n" ) unless( $$self->{writing} );
+
+    return syswrite( $self, @_ ); # buf, len, offset
+}
+
+sub READ {
+    my( $self, undef, $length, $offset ) = @_;
+
+    croak( "Can't read from " . ref $self . "\n" ) if( $$self->{writing} );
+
+    my $buf = \$_[1];
+    my $n = read( $self, $$buf, $length, $offset );
+    print { $$self->{tmp} } ( $$buf ) if( exists $$self->{tmp} );
+    return $n;
+}
+
+sub READLINE {
+    my $self = shift;
+
+    croak( "Can't read from " . ref $self . "\n" ) if( $$self->{writing} );
+    return <$self>;
+}
+
+sub GETC {
+    my $self = shift;
+
+    croak( "Can't read from " . ref $self . "\n" ) if( $$self->{writing} );
+    my $c = getc( $self );
+    print { $$self->{tmp} } ( $c ) if( exists $$self->{tmp} );
+    return $c;
+}
+
+sub SEEK {
+    my $self = shift;
+    my( $offset, $whence ) = @_;
+
+    croak( "Can't seek on " . ref $self . "\n" );
+    return seek( $self, $offset, $whence );
+}
+
+sub TELL {
+    my $self = shift;
+
+    return tell( $self );
+}
+
+sub EOF {
+    my $self = shift;
+
+    return eof( $self );
+}
+
+sub CLOSE {
+    my $self = shift;
+
+    if( exists $$self->{tmp} ) {
+        my $tmp = $$self->{tmp};
+        seek( $tmp, 0, SEEK_SET );
+        print STDERR while( <$tmp> );
+        seek( $tmp, 0, SEEK_SET );
+        truncate( $tmp, 0 ) or croak( "Failed to truncate tmpfile: $!\n" );
+    }
+    return close( $self );
+}
+
+sub DESTROY {
+    my $self = shift;
+
+    $self->CLOSE;
+}
