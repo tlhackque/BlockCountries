@@ -25,7 +25,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.10';
+my $VERSION = '2.11';
 
 # Copyright (c) 2010, 2012, 2015, 2016 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -170,6 +170,7 @@ use Text::ParseWords;
 # 2.8       Add LOGLEVEL configuration option.
 # 2.9       Simplify configuration.
 # 2.10      Add Default-Start and Default-Stop to LSB block, remove iptables because it's not always considered a service.
+# 2.11      Debug logging improvement: Append to STDOUT when starting second filter.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -252,6 +253,8 @@ my( $debug, $verbose, @iso, %iso, $update, $log, $days, $host, $permitonly, $out
     @loglimits, @atports, @auports, @atportso, @auportso, @aips, @dips );
 
 @loglimits = ( '1/minute', 10 );
+
+my $appendTee = '';
 
 # Parse port number or name
 
@@ -869,7 +872,10 @@ sub startUpdate( $ ) {
     my $ipv = shift;
 
     my $iptr = $ipv->{IPTR};
-    $iptr = "tee /dev/fd/2 | $iptr" if( $debug );
+    if( $debug ) {
+        $iptr = "tee ${appendTee}/dev/fd/2 | $iptr";
+        $appendTee = '-a ';
+    }
 
     open( my $fh, '|-', $iptr . " -n" ) or ( print( $iptr . ": $!\n"), return undef );
     print $fh ( "*filter\n" );
@@ -877,8 +883,8 @@ sub startUpdate( $ ) {
     return $fh;
 }
 
-sub commitUpdate( $ ) {
-    my $fh = shift;
+sub commitUpdate( $$ ) {
+    my( $fh, $ipv ) = @_;
 
     print $fh ( "COMMIT\n" );
     close $fh or die "Table update failed: $?\n";
@@ -923,16 +929,16 @@ sub deleterules( $\%$$)  {
 
     while( <$ipt> ) {
         my $line = $_;
-        if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) {
+        if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) { # Chain INPUT-HOOK (1 references)
             $chain = $1;
             if( $chain =~ /^$CHAIN-/ ) { # A (sub)chain of ours, flush contents, queue deletion
                 defchain( $fh, %$declared, $chain, 1 );
                 print $fh ( "-F $chain\n" );
             }
-        } elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) {
+        } elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) { # BLOCKCC1-I all -- 0.0.0.0/0  0.0.0.0/0
             die "Bad table format at $.\n" unless( defined $chain );
             my $target = $1;
-            if( $chain =~ $HOOK ) { # Remove rule in hook that calls our chain
+            if( $chain =~ $HOOK ) { # Remove each rule in every hook that calls our chain
                 # Must not defchain a hook as it will (mysteriously) empty it,
                 # causing -D to fail (and other chains using the hook to be lost as well.)
                 print $fh ( "-D $chain -j $target\n" );
@@ -1213,7 +1219,7 @@ sub start {
         print $fh ( "-A ${NEWCHAIN}-DLOG -j DROP\n" );
 
         my( $exceptions, $xrules ) = (0,0);
-        foreach my $pchain ( @genlist ) {
+        foreach my $pchain ( @genlist ) { # Direction codes: I or I O
             defchain( $fh, %declared, "${NEWCHAIN}-${pchain}" );
             if( $conntrack ) {
                 print $fh ( "-A ${NEWCHAIN}-$pchain -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n" );
@@ -1459,7 +1465,7 @@ sub start {
         # Remove old rules
         deleterules( $ipv, %declared, 'OLDCHAIN', $fh );
 
-        commitUpdate( $fh );
+        commitUpdate( $fh, $ipv );
 
         $ipv->{OLDCHAIN} = $ipv->{NEWCHAIN};
     }
@@ -1482,7 +1488,7 @@ sub stop {
 
         deleterules( $ipv, %declared, 'OLDCHAIN', $fh );
 
-        commitUpdate( $fh );
+        commitUpdate( $fh, $ipv );
     }
 
     if( !running ) {
