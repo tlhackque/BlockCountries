@@ -170,7 +170,7 @@ use Text::ParseWords;
 # 2.8       Add LOGLEVEL configuration option.
 # 2.9       Simplify configuration.
 # 2.10      Add Default-Start and Default-Stop to LSB block, remove iptables because it's not always considered a service.
-# 2.11      Debug logging improvement: Append to STDOUT when starting second filter.
+# 2.11      Debug logging improvement: Append to STDERR when starting second filter.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
