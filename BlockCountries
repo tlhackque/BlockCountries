@@ -25,7 +25,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.13';
+# my $VERSION = see below;
 
 # Copyright (c) 2010, 2012, 2015, 2016 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -185,6 +185,9 @@ use Text::ParseWords;
 # 2.11      Debug logging improvement: Append to STDERR when starting second filter.
 # 2.12      Rewrite debug logging and gather system data to assist diagnosing problems.
 # 2.13      Add zip compression to debug log when possible.  Log start/stop to syslog.
+# 2.14      Cosmetic logging improvements.
+
+my $VERSION = '2.14';
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -1921,6 +1924,8 @@ package BC::IO;
 use warnings;
 use strict;
 
+use overload( q("") => \&path );
+
 use Carp;
 
 sub TIESCALAR {
@@ -1937,6 +1942,12 @@ sub TIESCALAR {
     $$$self = tie( *$$self, $class, @_ ) or return;
 
     return $self;
+}
+
+sub path {
+    my $self = shift;
+
+    return $$$self->path;
 }
 
 sub line {
@@ -1967,6 +1978,8 @@ package BC::IO::Handle;
 use warnings;
 use strict;
 
+use overload( q("") => \&path );
+
 use Carp;
 use Fcntl qw(:seek);
 
@@ -1995,7 +2008,19 @@ sub TIEHANDLE {
 
     $$self->{writing} = 1 if( $mode =~ />|(?:^|)/ );
 
+    $mode =~ s/^(?:\+?[<>]{1,2})|(?:\|-?)//;
+    $mode =~ s/^\s+//;
+    $mode =~ s/\s+(?:\|-?)?$//;
+    $mode = $_[0] unless( length $mode );
+    $$self->{file} = $mode;
+
     return $self;
+}
+
+sub path {
+    my $self = shift;
+
+    return $$self->{file};
 }
 
 sub OPEN {
@@ -2006,6 +2031,14 @@ sub OPEN {
     $self->CLOSE;
 
     open( $self, $mode, @_ ) or return;
+
+    $$self->{writing} = 1 if( $mode =~ />|(?:^|)/ );
+
+    $mode =~ s/^(?:\+?[<>]{1,2})|(?:\|-?)//;
+    $mode =~ s/^\s+//;
+    $mode =~ s/\s+(?:\|-?)?$//;
+    $mode = $_[0] unless( length $mode );
+    $$self->{file} = $mode;
 
     return 1;
 }
@@ -2032,7 +2065,7 @@ sub PRINT {
 
     print { $$self->{tmp} } ( @_ ) if( exists $$self->{tmp} );
 
-    $$self->{'.'}++;
+    $$self->{'.'} += join( '', @_ ) =~ tr/\n/\n/;
     return 1 if( print $self ( @_ ) );
 
     $$self->{'e.'} = $$self->{'.'} unless( $$self->{'e.'} );
@@ -2041,6 +2074,8 @@ sub PRINT {
 
 sub line {
     my $self = shift;
+
+    return (\*$$self)->input_line_number unless( $$self->{writing} );
 
     return $$self->{'e.'} || 0;
 }
@@ -2064,7 +2099,13 @@ sub WRITE {
 
     croak( "Write to read-only handle\n" ) unless( $$self->{writing} );
 
-    return syswrite( $self, @_ ); # buf, len, offset
+    $$self->{'.'} += $_[0] =~ tr/\n/\n/;
+
+    my $rc = syswrite( $self, @_ ); # buf, len, offset
+    return $rc if( $rc );
+
+    $$self->{'e.'} = $$self->{'.'} unless( $$self->{'e.'} );
+    return $rc;
 }
 
 sub READ {
@@ -2074,6 +2115,7 @@ sub READ {
 
     my $buf = \$_[1];
     my $n = read( $self, $$buf, $length, $offset );
+
     print { $$self->{tmp} } ( $$buf ) if( exists $$self->{tmp} );
     return $n;
 }
@@ -2139,8 +2181,8 @@ sub CLOSE {
         truncate( $tmp, 0 ) or croak( "Failed to truncate tmpfile: $!\n" );
 
         if( defined $output ) {                      # Program output follows
-            print STDERR ( "==========\n", $output, "==========\n" );
             print $output;
+            printf STDERR ( "===== %s =====\n%s=====%s=====\n", $self->path, $output, '=' x (2 + length( $self->path )) );
         }
 
         seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );
