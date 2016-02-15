@@ -1,5 +1,19 @@
 #!/bin/bash
 
+V=
+
+while getopts ":v" opt; do
+    case $opt in
+        v) V=1
+            ;;
+        \?)
+            echo "Invalid option: -$OPTARG" >&2
+            echo "Usage: `basename $0` [-v]"
+            exit 1
+            ;;
+    esac
+done
+
 if ! which perl > /dev/null 2>&1 ; then
     echo "You need to install Perl, from your distribution, or see https://www.perl.org"
     exit 1
@@ -23,7 +37,11 @@ fi
 function needs {
     m="$1"
     v="$2"
-    if ! perl -M"$m $v" -e'exit;' >/dev/null 2>&1 ; then
+    if perl -M"$m $v" -e'exit;' >/dev/null 2>&1 ; then
+        if [ -n "$v" ] && [ -n "$V" ]; then
+            perl -M"$m" -e"print \"  $m version \$$m::VERSION found\n\";exit;"
+        fi
+    else
         if [ -z "$v" ]; then
             echo "Perl version $m is required"
             OK=
@@ -74,6 +92,10 @@ needs Symbol                 1.06
 needs Sys::Syslog            0.29
 needs Text::ParseWords       3.27
 
+if [ -n "$V" ]; then
+    echo
+fi
+
 if [ -n "$OK" ]; then
     echo "All needed perl modules are installed and meet minimum version requirements"
 else
@@ -98,43 +120,50 @@ else
     exit 1;
 fi
 
-if ! which iptables >/dev/null 2>&1 ; then
-    echo "You need to install iptables"
-    exit 1
+if [ "`readlink -f $ppath/perl`" != "`readlink -f /usr/bin/perl`" ]; then
+    echo ""
+    echo "You must create a symbolic link from /usr/bin/perl to `readlink -f $ppath/perl`"
 fi
-
-path="`which iptables`"
-
-path="`dirname $path`"
 
 echo ""
 
-echo "`iptables --version` found in $path"
-echo "`ip6tables --version` found in $path"
+OK=1
+patha=
+pgma=
+for ipt in iptables ip6tables iptables-restore ip6tables-restore iptables-save ip6tables-save; do
 
-for ipt in iptables-restore ip6tables ip6tables-restore; do
-    iptpath="`which $ipt`"
-
-    iptpath="`dirname $iptpath`"
-
-    if [ "$ipt"!="iptables" ] && [ "$ipt"!="ip6tables" ]; then
-        echo "$ipt found in $iptpath"
+    if ! which $ipt >/dev/null 2>&1 ; then
+        echo "$ipt not found in $PATH"
+        OK=
+    else
+        path="`which $ipt`"
+        path="`dirname $path`"
+        if [[ "$ipt" =~ - ]]; then # tables-(something) don't have --version
+            echo "$ipt found in $path"
+        else
+            echo "`$ipt --version` found in $path"
+        fi
+        if [ -z "$patha" ]; then
+            patha="$path"
+            pgma="$ipt"
+        else
+            if [ "$path" != "$patha" ]; then
+                echo "$ipt must be in the same directory ($patha) as $pgma $path"
+                OK=
+            fi
+        fi
     fi
-    if [ "$iptpath" != "$path" ]; then
-        echo "$ipt must be in the same path as iptables"
-        exit 1
-    fi
+
 done
 
+if [ -z "$OK" ]; then
+    echo "iptables must be installed"
+    exit 1;
+fi
 
 if [ "$path" != '/sbin' ]; then
     echo ""
     echo "Be sure to include \"-path $path\" in your configuration file"
-fi
-
-if [ "`readlink -f $ppath/perl`" != "`readlink -f /usr/bin/perl`" ]; then
-    echo ""
-    echo "You must create a symbolic link from /usr/bin/perl to `readlink -f $ppath/perl`"
 fi
 
 echo ""

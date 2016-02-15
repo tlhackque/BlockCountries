@@ -84,18 +84,19 @@ my @CFGFILE = qw{ ./BlockCountries
 # These can (and should) be specified in the configuration file
 # They can NOT be specified on the command line
 
-my $ZONEDIR = '/root/blockips';  # zonedir 
+my $ZONEDIR = '/root/blockips';  # zonedir
 
 my $LOGPFX = '[Blocked CC]: ';   # logpfx
 my $LOG = '/var/log/messages*';  # logfile Note: This is a wildcard to handle log rotation.  .gz files will decompressed on the fly and processed.
-my $LOGPGM = 'kernel';           # logpgm 
-my $LOGLEVEL = ''; # loglevel To force a non-default logging priority, specify here (e.g. NOTICE).  
+my $LOGPGM = 'kernel';           # logpgm
+my $LOGLEVEL = ''; # loglevel To force a non-default logging priority, specify here (e.g. NOTICE).
                    # Can be a number or name.  Leave as '' for the default. (Recommended)
 
 my %config = ( # Parameters that can vary between IPV4 and IPV6
               4 => {
                     IPT => '$path/iptables', # $path can be changed from config file with -path
                     IPTR => '$path/iptables-restore',
+                    IPTS => '$path/iptables-save',
                     IHOOK => 'INPUT-HOOK',   # Note: if this table is not found, INPUT will be used
                     OHOOK => 'OUTPUT-HOOK',  # Note: if this table is not found, OUTPUT will be used
                     FHOOK => 'FORWARD-HOOK', # Note: if this table is not found, FORWARD will be used
@@ -106,6 +107,7 @@ my %config = ( # Parameters that can vary between IPV4 and IPV6
               6 => {
                     IPT => '$path/ip6tables',
                     IPTR => '$path/ip6tables-restore',
+                    IPTS => '$path/ip6tables-save',
                     IHOOK => 'INPUT-HOOK',   # Note: if this table is not found, INPUT will be used
                     OHOOK => 'OUTPUT-HOOK',  # Note: if this table is not found, OUTPUT will be used
                     FHOOK => 'FORWARD-HOOK', # Note: if this table is not found, FORWARD will be used
@@ -186,8 +188,9 @@ use Text::ParseWords;
 # 2.12      Rewrite debug logging and gather system data to assist diagnosing problems.
 # 2.13      Add zip compression to debug log when possible.  Log start/stop to syslog.
 # 2.14      Cosmetic logging improvements.
+# 2.15      Include ipt-save format data in -d to ease reproducing issues
 
-my $VERSION = '2.14';
+my $VERSION = '2.15';
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -525,7 +528,10 @@ sub finish {
         local $!;
         local $?;
 
-        printf STDERR ( "\n-------------------------------------------\nComplete on %s", `date +'%A %e-%b-%Y %T %Z'` );
+        seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );
+
+        printf STDERR ( "\n-------------------------------------------\nComplete on %s",
+                        POSIX::strftime( '%A %e-%b-%Y %T %Z', localtime( time ) ) );
 
         # Copy spooled output for STDERR to real STDERR
 
@@ -573,7 +579,7 @@ if( !defined $ipv4 && !defined $ipv6 ) {
 }
 
 foreach my $ipv (qw(4 6 )) {
-    foreach my $key (qw(IPT IPTR)) {
+    foreach my $key (qw(IPT IPTR IPTS)) {
         $config{$ipv}{$key} =~ s/\$path/$path/g;
     }
 }
@@ -1027,7 +1033,7 @@ sub startUpdate( $ ) {
     tie( my $fh, 'BC::IO', $debug,  '|-', $iptr,  '-n' ) or ( print( "Unable to run $iptr: $!\n" ), return undef );
 
     if( $debug ) {
-        if( $ENV{PATH} ) {
+        if( $ENV{PATH} && !( $ifcfgDone && $unameDone ) ) {
             foreach my $dir (split( /:/, $ENV{PATH} )) {
                 my $ifp;
                 if( !$ifcfgDone && ( -x ($ifp = "$dir/ifconfig") || -x ($ifp = "$dir/ip") ) ) {
@@ -1037,7 +1043,7 @@ sub startUpdate( $ ) {
                     if( open( my $ifc, '-|', "$ifp 2>&1" ) ) {
                         while( <$ifc> ) {
                             next unless( $ifp =~ m,/ip a$, || m/ (?:HW)?addr[: ]/ );
-                            $fh->log( $_ );
+                            $fh->log( "%s", $_ );
                         }
                         close( $ifc );
                     } else {
@@ -1050,7 +1056,7 @@ sub startUpdate( $ ) {
                     $fh->log( "uname -a\n--------\n" );
                     if( open( my $unm, '-|', "uname -a 2>&1" ) ) {
                         while( <$unm> ) {
-                            $fh->log( $_ );
+                            $fh->log( "%s", $_ );
                         }
                         close( $unm );
                     } else {
@@ -1062,13 +1068,26 @@ sub startUpdate( $ ) {
         }
 
         $fh->log( "\nCurrent IPv%u rules\n------------------\n\n", $ipv->{VERSION} );
-        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or ( die( $ipv->{IPT} . ": ($?) $!\n" ) );
+        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or
+            ( die( $ipv->{IPT} . ": ($?) $!\n" ) );
+
         while( <$ipt> ) {
-            $fh->log( $_ );
+            $fh->log( "%s", $_ );
         }
         close( $ipt );
 
-        $fh->log( "\nGenerating rules for %s\n---------------------%s\n", $iptr, '-' x length( $iptr ) );
+        $fh->log( "-------- $ipv->{IPTS} --------\n" );
+        undef $ipt;
+        open( $ipt, '-|', $ipv->{IPTS} . " 2>&1" ) or
+            ( die( $ipv->{IPTS} . ": ($?) $!\n" ) );
+
+        while( <$ipt> ) {
+            $fh->log( "%s", $_ );
+        }
+        close( $ipt );
+
+        $fh->log( "\nGenerating rules for %s\n---------------------%s\n",
+                  $iptr, '-' x length( $iptr ) );
     }
 
     print $fh ( "*filter\n" );
@@ -1106,7 +1125,7 @@ sub commitUpdate( $$ ) {
                   "New IPv%u rules\n--------------\n\n", $ipv->{VERSION} );
         open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or ( die( $ipv->{IPT} . ": ($?) $!\n" ) );
         while( <$ipt> ) {
-            $fh->log( $_ );
+            $fh->log( "%s", $_ );
         }
         close( $ipt );
     }
@@ -2000,7 +2019,7 @@ sub TIEHANDLE {
 
         $$self->{tmp} = File::Temp->new( UNLINK => 1 );
 
-        seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );
+        seek( STDERR, 0, SEEK_CUR ) or croak( "stderr seek: $!\n" );
         $$self->{stdp} = tell( STDERR );
     }
 
@@ -2029,6 +2048,10 @@ sub OPEN {
     my $mode = shift;
 
     $self->CLOSE;
+
+    if( exists $$self->{tmp} ) {
+        seek( STDERR, 0, SEEK_CUR ) or croak( "stderr seek: $!\n" );
+    }
 
     open( $self, $mode, @_ ) or return;
 
@@ -2085,6 +2108,8 @@ sub log {
     my $fmt = shift;
 
     return printf { $$self->{tmp} } ( $fmt, @_ ) if( exists $$self->{tmp} );
+
+    return 1;
 }
 
 sub PRINTF {
@@ -2167,7 +2192,7 @@ sub CLOSE {
 
         my $output;
 
-        seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );
+        seek( STDERR, 0, SEEK_CUR ) or croak( "stderr seek: $!\n" );
         if( (my $stp = $$self->{stdp}) != tell( STDERR ) ) { # subprocess wrote to STDERR, collect output
             seek( STDERR, $stp, SEEK_SET ) or croak( "stderr seek: $!\n" );
             local $/;
@@ -2176,13 +2201,16 @@ sub CLOSE {
         }
         my $tmp = $$self->{tmp};                     # Copy spooled output to STDERR spool file
         seek( $tmp, 0, SEEK_SET );
+
         print STDERR ( $_ ) while( <$tmp> );
+
         seek( $tmp, 0, SEEK_SET );
         truncate( $tmp, 0 ) or croak( "Failed to truncate tmpfile: $!\n" );
 
         if( defined $output ) {                      # Program output follows
             print $output;
-            printf STDERR ( "===== %s =====\n%s=====%s=====\n", $self->path, $output, '=' x (2 + length( $self->path )) );
+            printf STDERR ( "===== %s =====\n%s=====%s=====\n",
+                            $self->path, $output, '=' x (2 + length( $self->path )) );
         }
 
         seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );

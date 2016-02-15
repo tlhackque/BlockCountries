@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.15 bcinstall improvements. iptables-restore format debug data.
+
 V2.14 Cosmetic logging improvements
 
 V2.13 Add Zip compression to debug log.  Log start and stop to syslog.
