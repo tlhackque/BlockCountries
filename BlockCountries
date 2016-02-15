@@ -25,7 +25,7 @@
 use strict;
 use warnings;
 
-my $VERSION = '2.12';
+my $VERSION = '2.13';
 
 # Copyright (c) 2010, 2012, 2015, 2016 Timothe Litt, litt__at__acm_dot_org
 #  All rights reserved.
@@ -140,10 +140,11 @@ use Carp;
 use Cwd qw/realpath/;
 use File::Path;
 #use File::Temp;
+#use IO::Compress::Zip;
 #use IO::Uncompress::Gunzip;
 use Locale::Country;
 #use LWP::Simple;
-#use Fcntl qw(:seek);
+use Fcntl qw(:seek);
 use Net::IP;
 use NetAddr::IP qw(:lower);
 #use Net::Domain;
@@ -152,6 +153,8 @@ use NetAddr::IP qw(:lower);
 use Regexp::IPv6 qw( $IPv6_re );
 use Socket qw( :addrinfo SOCK_RAW );
 use Storable qw( lock_store lock_retrieve );
+#use Symbol
+use Sys::Syslog;
 use Text::ParseWords;
 
 # Changelog (Also update revision above & README!)
@@ -181,12 +184,16 @@ use Text::ParseWords;
 # 2.10      Add Default-Start and Default-Stop to LSB block, remove iptables because it's not always considered a service.
 # 2.11      Debug logging improvement: Append to STDERR when starting second filter.
 # 2.12      Rewrite debug logging and gather system data to assist diagnosing problems.
+# 2.13      Add zip compression to debug log when possible.  Log start/stop to syslog.
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
 umask 0137;
 
 my $prog = basename $0;
+
+my $stderr = \*STDERR;
+my $zipavail;
 
 # Command is never in config file
 
@@ -267,10 +274,11 @@ if( $cmd eq 'config' ) {
 # Collect all arguments here, even though they are mostly for start
 # This allows detailed status
 
-my( $debug, $verbose, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules, $ipv4, $ipv6, $conntrack,
+my( $debug, $verbose, $usezip, $syslog, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules, $ipv4, $ipv6, $conntrack,
     @loglimits, @atports, @auports, @atportso, @auportso, @aips, @dips );
 
 @loglimits = ( '1/minute', 10 );
+$syslog = 1;
 
 # Parse port number or name
 
@@ -330,6 +338,22 @@ while( (my $arg = shift) ) {
         }
         if( $arg eq '-d' ) {
             $debug = 1;
+            next;
+        }
+        if( $arg eq '-z' ) {
+            $usezip = 1;
+            next;
+        }
+        if( $arg eq '-noz' ) {
+            $usezip = 0;
+            next;
+        }
+        if( $arg eq '-syslog' ) {
+            $syslog = 1;
+            next;
+        }
+        if( $arg eq '-nosyslog' ) {
+            $syslog = 0;
             next;
         }
         if( $arg eq '-limit' && $ARGV[0] ) {
@@ -449,19 +473,95 @@ while( (my $arg = shift) ) {
     }
 }
 
-printf STDERR ( "Starting version $VERSION on %sExecuting %s\n\n", `date +'%A %e-%b-%Y %T %Z'`, join(' ', map {
+my $argstring = join(' ', map {
     my $t = $_;
 
     my $qq = $t =~ s/(["\$`\\])/\\$1/g || $t =~ /\s/;
     $qq ||= $t =~ s/([[:^print:]])/'\\c' . chr( ord( 'A' ) - ord( "\cA" ) + ord( $1 ) )/ge;
     $qq? qq("$t") : $t
-                                         } ( $0, ( splice( @argv, 0, @ARGV - $argc ), $cmd, splice( @argv, -$argc ) ) ) ) ) if( $debug );
+                     }
+                     ( $0, ( splice( @argv, 0, @ARGV - $argc ), $cmd, splice( @argv, -$argc ) ) ) );
+
+if( $debug ) {
+    require POSIX;
+    require File::Temp;
+
+    $zipavail = eval { require IO::Compress::Zip };
+
+    $usezip = $zipavail unless( defined $usezip || -t $stderr );
+
+    # Attach STDERR to a tempfile so iptables output can be captured.
+    # The real STDERR is saved and the output from it and the BC::IO logging copied to it
+    # in the right sequence.
+
+    my $errf = File::Temp->new( UNLINK => 1 );
+    open( my $std, ">&STDERR" ) or die( "Can't save STDERR: $!\n" );
+    $stderr = $std;
+    close( STDERR ); # Required to re-open in update mode
+
+    open( STDERR, "+>&" . fileno( $errf ) ) or die( "Can't redirect STDERR: $!\n" );
+
+    if( $usezip ) {
+        if( $zipavail && ! -t $stderr ) {
+            print( "Debug log will be written as a .zip archive\n" );
+        } elsif( !$zipavail ) {
+            print( "IO::Compress::Zip must be installed to use zip, debug log will be written as text\n" );
+        } else {
+            print ( "Debug log will be written as text: won't zip to a terminal\n" );
+        }
+    }
+
+    printf STDERR ( "Starting version $VERSION on %s\nExecuting %s\n\n",
+                    POSIX::strftime( '%A %e-%b-%Y %T %Z', localtime( time ) ), $argstring );
+}
+
 @argv = ();
 
-END {
-    printf STDERR ( "\n-------------------------------------------\nComplete on %s", `date +'%A %e-%b-%Y %T %Z'` )
-        if( $debug );
+sub finish {
+    if( $debug ) {
+        local $!;
+        local $?;
+
+        printf STDERR ( "\n-------------------------------------------\nComplete on %s", `date +'%A %e-%b-%Y %T %Z'` );
+
+        # Copy spooled output for STDERR to real STDERR
+
+        seek( STDERR, 0, SEEK_SET ) or die( "seek: $!\n" );
+
+        my $fh = $stderr;
+        if( $debug && $zipavail && $usezip && ! -t $stderr ) {
+            no warnings 'once';
+            $fh = IO::Compress::Zip->new( $stderr,
+                                          AutoClose => 0,
+                                          Name => sprintf( "$prog-%s.log", POSIX::strftime( '%Y-%m-%d-%H-%M-%S',
+                                                                                            gmtime( time ) ) ),
+                                          CanonicalName => 1,
+                                          TextFlag => 1 ) or
+                                              die( "Can't create zipfile: $IO::Compress::Zip::ZipError\n" );
+        }
+        print $fh ( $_ ) while( <STDERR> );
+        close( $fh ) if( $fh->isa( 'IO::Compress::Zip' ) );
+    }
 }
+
+END {
+
+    finish();
+}
+
+$SIG{PIPE} = 'IGNORE';
+
+$SIG{__DIE__} = sub {
+    die( @_ ) if( $^S );
+
+    print STDERR ( @_ );
+
+    finish();
+
+    exit( $! ) if( $! );
+    exit( $? >> 8  ) if( $? >> 8 );
+    exit 255;
+};
 
 my( $ifcfgDone, $unameDone );
 
@@ -591,12 +691,17 @@ Arguments for start-class commands are:
  -path /sbin        Path for iptables utilities (use in the configuration file)
  -permitonly        Listed countries will be permited, all others denied.
                     Put in -permitonly in the configuration file so status and start are consistent.
+ -syslog            Log start/stop to syslog (default)
+ -nosyslog          Don\'t log to syslog
  -blockout          Also generate rules to block output & forwarded-output.
                     This is probably not required for most applications, and
                     will roughly double the memory requirements.
                     Caution: If you use -blockout for start, you must also use it for stop.
                     This will not be a problem if it\'s in the configuration file.
- -d                 Output random debugging messages
+ -d                 Output random debugging messages. Must redirect stderr to disk for some
+                    commands. Can be several MB.
+ -z                 Write -d output to a zip archive on stderr. TTY not allowed. Default if possible.
+ -noz               Don\'t
  -v                 Output extended status/statistics
   CC                ISO Country code or name to ban (or permit if -permitonly).
                     Specify as many as you like.
@@ -734,6 +839,11 @@ HELP
 # 0 = default; 1 = bold; 31 = green, 32 = red; 1 = bold; 39 = "default" (boot requires)
 
 sub success {
+    eval {
+        openlog( $prog, 'pid', 'daemon' );
+        syslog( "info", "succeeded" );
+        closelog;
+    } if( $syslog );
     return 1 if( $ENV{CRONJOB} );
 
     if( -t STDOUT ) {
@@ -745,6 +855,11 @@ sub success {
 }
 
 sub failure {
+    eval {
+        openlog( $prog, 'pid', 'daemon' );
+        syslog( "info", "failed" );
+        closelog;
+    } if( $syslog );
     return 0 if( $ENV{CRONJOB} );
 
     if( -t STDOUT ) {
@@ -918,6 +1033,7 @@ sub startUpdate( $ ) {
                     $fh->log( "%s\n%s\n", $ifp, '-' x length $ifp );
                     if( open( my $ifc, '-|', "$ifp 2>&1" ) ) {
                         while( <$ifc> ) {
+                            next unless( $ifp =~ m,/ip a$, || m/ (?:HW)?addr[: ]/ );
                             $fh->log( $_ );
                         }
                         close( $ifc );
@@ -953,7 +1069,6 @@ sub startUpdate( $ ) {
     }
 
     print $fh ( "*filter\n" );
-
     return $fh;
 }
 
@@ -963,12 +1078,21 @@ sub commitUpdate( $$ ) {
     print $fh ( "COMMIT\n" );
     unless( close $fh ) {
         my $reason = '';
-        $reason .= sprintf( " killed by signal %u", $? & 127 ) if( $? & 127 );
-        $reason .= sprintf( " exit code %d", $? >> 8 ) if( $? >> 8 );
-        $reason .= " core dumped" if( $> & 128 );
-        $reason = " $!" unless( $reason );
 
+        if( $! ) {
+            $reason = " $!";
+        } else {
+            if( $? == -1 ) {
+                $reason .= " Unknown reason";
+            } else {
+                $reason .= sprintf( " killed by signal %u", $? & 127 ) if( $? & 127 );
+                $reason .= sprintf( " exit code %d", $? >> 8 ) if( $? >> 8 );
+                $reason .= " core dumped" if( $? & 128 );
+            }
+        }
+        $reason .= sprintf( " at line %u", $fh->line );
         $reason = 'Rules update failed:' . "$reason\n";
+        print STDOUT ( $reason ) if( $debug );
         die( $reason );
 
         return 0;
@@ -1705,7 +1829,7 @@ sub intercepts {
 if( $debug ) {
     if( config( \*STDERR ) == 0 ) {
         if( open( my $fh, '<', $currentCFGFILE ) ) {
-            print STDERR ( "Configuration file\n------------------\n" );
+            print STDERR ( "\nConfiguration file\n------------------\n" );
             while( <$fh> ) {
                 print STDERR ( "    $_" );
             }
@@ -1717,7 +1841,8 @@ if( $debug ) {
         printf STDERR ( "\nIPv%s configuration:\n------------------\n", $ipv->{VERSION} );
         foreach my $item (sort keys %$ipv) {
             next if( $item eq 'VERSION' );
-            printf STDERR ( "  %-10s: %s", $item, $ipv->{$item} );
+            printf STDERR ( "  %-10s: %s", $item,
+                            (defined( $ipv->{$item} )? $ipv->{$item}: 'undef') );
             if( $item =~ /^table_/ ) {
                 if( -r $ipv->{$item} && open( my $f, '<', $ipv->{$item} ) ) {
                     local $/;
@@ -1732,44 +1857,57 @@ if( $debug ) {
     printf STDERR ( "\n" );
 }
 
-if( $cmd eq 'status' ) {
-    exit !status();
-}
-if( $cmd eq 'list' ) {
-    exit !list();
-}
-if( $cmd eq 'intercepts' ) {
-    exit !intercepts();
-}
-if( $cmd =~ /^(?:--)?help$/ ) {
-    Usage();
-    exit;
-}
-if( $cmd =~ /^(?:--)?version$/ ) {
-    print( "$prog version $VERSION\n" );
-    exit;
-}
+my $rc = eval {
+    if( $cmd eq 'status' ) {
+        return !status();
+    }
+    if( $cmd eq 'list' ) {
+        return !list();
+    }
+    if( $cmd eq 'intercepts' ) {
+        return !intercepts();
+    }
+    if( $cmd =~ /^(?:--)?help$/ ) {
+        Usage();
+        return 0;
+    }
+    if( $cmd =~ /^(?:--)?version$/ ) {
+        print( "$prog version $VERSION\n" );
+        return 0;
+    }
 
-if( $debug && -t STDERR ) {
-    printf( "**** COMMAND WILL NOT BE EXECUTED ****\nLarge output is expected, please add %u>file.log to capture\ ****n",
-            fileno( STDERR ) );
-    exit 1;
-}
+    if( $debug && -t $stderr ) {
+        printf( "**** COMMAND WILL NOT BE EXECUTED ****\nLarge output is expected, please add%s %u>file.%s to capture\ ****\n",
+                ($zipavail? ' -z': ''), fileno( STDERR ), ($zipavail? 'zip' : 'log') );
+        $debug = 0;
+        return 1;
+    }
 
-if( $cmd eq 'start' ) {
-    exit !start();
+    eval {
+        openlog( $prog, 'pid', 'daemon' );
+        syslog( "info", $argstring );
+        closelog;
+    } if( $syslog );
+
+    if( $cmd eq 'start' ) {
+        return !start();
+    }
+    if( $cmd eq 'stop' ) {
+        return !stop();
+    }
+    if( $cmd eq 'restart' ) {
+        return !restart();
+    }
+    if( $cmd eq 'condrestart' ) {
+        return !(running && restart());
+    }
+    print( "Usage: $prog (start|stop|restart|condrestart|status|list|intercepts|config|help|version)\n" );
+    return 1;
+}; if( $@ ) {
+    print STDERR ( $@ );
+    failure;
 }
-if( $cmd eq 'stop' ) {
-    exit !stop();
-}
-if( $cmd eq 'restart' ) {
-    exit !restart();
-}
-if( $cmd eq 'condrestart' ) {
-    exit !(running && restart());
-}
-print( "Usage: $prog (start|stop|restart|condrestart|status|list|intercepts|config|help|version)\n" );
-exit 1;
+exit( $rc || 0 );
 
 # IO Package to enable logging
 #
@@ -1799,6 +1937,12 @@ sub TIESCALAR {
     $$$self = tie( *$$self, $class, @_ ) or return;
 
     return $self;
+}
+
+sub line {
+    my $self = shift;
+
+    return $$$self->line( @_ );
 }
 
 sub log {
@@ -1836,15 +1980,18 @@ sub TIEHANDLE {
 
     my $self = Symbol::gensym();
 
-    open( $self, $mode, @_ ) or return;
-
     bless( $self, $class );
 
     if( $debug ) {
         require File::Temp;
 
         $$self->{tmp} = File::Temp->new( UNLINK => 1 );
+
+        seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );
+        $$self->{stdp} = tell( STDERR );
     }
+
+    open( $self, $mode, @_ ) or return;
 
     $$self->{writing} = 1 if( $mode =~ />|(?:^|)/ );
 
@@ -1885,7 +2032,17 @@ sub PRINT {
 
     print { $$self->{tmp} } ( @_ ) if( exists $$self->{tmp} );
 
-    return print $self ( @_ );
+    $$self->{'.'}++;
+    return 1 if( print $self ( @_ ) );
+
+    $$self->{'e.'} = $$self->{'.'} unless( $$self->{'e.'} );
+    return;
+}
+
+sub line {
+    my $self = shift;
+
+    return $$self->{'e.'} || 0;
 }
 
 sub log {
@@ -1960,14 +2117,36 @@ sub EOF {
 sub CLOSE {
     my $self = shift;
 
+    my $rc = close( $self );
+
     if( exists $$self->{tmp} ) {
-        my $tmp = $$self->{tmp};
+        local $!;
+        local $?;
+
+        my $output;
+
+        seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );
+        if( (my $stp = $$self->{stdp}) != tell( STDERR ) ) { # subprocess wrote to STDERR, collect output
+            seek( STDERR, $stp, SEEK_SET ) or croak( "stderr seek: $!\n" );
+            local $/;
+            $output = <STDERR>;
+            seek( STDERR, $stp, SEEK_SET ) or croak( "stderr seek: $!\n" );
+        }
+        my $tmp = $$self->{tmp};                     # Copy spooled output to STDERR spool file
         seek( $tmp, 0, SEEK_SET );
-        print STDERR while( <$tmp> );
+        print STDERR ( $_ ) while( <$tmp> );
         seek( $tmp, 0, SEEK_SET );
         truncate( $tmp, 0 ) or croak( "Failed to truncate tmpfile: $!\n" );
+
+        if( defined $output ) {                      # Program output follows
+            print STDERR ( "==========\n", $output, "==========\n" );
+            print $output;
+        }
+
+        seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );
+        $$self->{stdp} = tell( STDERR );
     }
-    return close( $self );
+    return $rc;
 }
 
 sub DESTROY {
@@ -1975,3 +2154,5 @@ sub DESTROY {
 
     $self->CLOSE;
 }
+
+__END__

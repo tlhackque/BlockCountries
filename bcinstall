@@ -58,6 +58,7 @@ needs Cwd                     3.33
 needs File::Path              2.08
 needs File::Temp              0.2304
 needs Fcntl                   1.05
+needs IO::Compress::Zip       2.069
 needs IO::Uncompress::Gunzip  2.064
 needs Locale::Country         3.37
 needs LWP::Simple             6.00
@@ -70,6 +71,7 @@ needs Regexp::IPv6           0.03
 needs Socket                 2.006
 needs Storable               2.30
 needs Symbol                 1.06
+needs Sys::Syslog            0.29
 needs Text::ParseWords       3.27
 
 if [ -n "$OK" ]; then

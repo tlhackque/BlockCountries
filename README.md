@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.13 Add Zip compression to debug log.  Log start and stop to syslog.
+
 V2.12 Rewrite debug logging and gather more data for debugging.
 
 V2.11 Improve debug logging.  `bcinstall` reports all problems at once, provides more detail.
