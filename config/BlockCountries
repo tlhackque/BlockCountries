@@ -83,3 +83,6 @@ md "Moldova, Republic of"
 
 # Use passive mode FTP when retrieving data
 -passive
+
+# Log start/stop to syslog
+-syslog
