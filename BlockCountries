@@ -191,8 +191,9 @@ use Text::ParseWords;
 # 2.14      Cosmetic logging improvements.
 # 2.15      Include ipt-save format data in -d to ease reproducing issues
 # 2.16      Don't inspect a protocol's configuration if it's not enabled.  Add -modules for debugging.
+# 2.17      Some future-proofing for -modules.
 
-my $VERSION = '2.16';
+my $VERSION = '2.17';
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -536,14 +537,20 @@ if( ($modules || ($debug && !defined $modules)) && seek( DATA, 0, SEEK_SET ) ) {
     # Caution: may mask or change some bugs, so -d -nomodules if it does...
 
     my %modules = ( 'IO::Compress::Zip' => 1 ); # Not detected by regexp
+    my %pragma = ( map { $_ => 1 } (qw/attributes autodie autouse base bigint bignum bigrat/,
+                                    qw/blib bytes charnames constant/,
+                                    qw/diagnostics encoding feature fields filetest if integer/,
+                                    qw/less lib locale mro/,
+                                    qw/open ops overload overloading parent re sigtrap sort/,
+                                    qw/strict vars subs threads thread::shared utr8 vars vmsish/,
+                                    qw/warnings warnings::register/ ) );
     my $max = 0;
 
     while( defined( my $line = <DATA> ) ) {
         last if( $line =~ /^__END__$/ );
-        next unless( $line =~ m/^\s*(?:require|use)\s+([^ (;]+)/ );
+        next unless( $line =~ m/^\s*(?:require|use)\s+([^\s(;]+)/ );
         my $mod = $1;
-        next if( $mod =~ /(?:warnings|strict|overload)$/ );
-        next if( $mod =~ /^\d+\.\d+\.\d+$/ );
+        next if( $pragma{$mod} || $mod =~ /^\d+\.\d+\.\d+$/ );
         $modules{$mod} = 1;
         $max = length( $mod ) if( length $mod > $max );
     }
