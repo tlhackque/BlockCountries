@@ -15,6 +15,12 @@ should run.
 To see the installed versions of the modules that it checks for, use
    bcinstall -v
 
+If you are not going to filter IPv4:
+   bcinstall -F
+
+If you are not going to filter IPv6
+   bcinstall -S
+
 If it says that you need to install perl, it should be packaged for your
 distribution (apt-get, yum, etc.) If you can’t find a current perl version
 for your distribution (which would be very, very surprising)  you can find

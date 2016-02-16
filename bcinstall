@@ -1,14 +1,63 @@
 #!/bin/bash
 
 V=
-
-while getopts ":v" opt; do
+IP6=1
+IP4=1
+while getopts ":hHFSv" opt; do
     case $opt in
-        v) V=1
+        v)
+            V=1
+            ;;
+        F)
+            IP4=
+            ;;
+        S)
+            IP6=
+            ;;
+        h|H)
+            cat >&2 <<EOF
+Check for software required to run BlockCountries
+
+Usage
+    `basename $0` [-h] [-v] [-F] [-S]
+
+Options
+    -h This help
+    -F Do NOT check for IPv4 software
+    -S Do NOT check for IPv6 software
+    -v List installed Perl modules that meet minimun version requirements
+
+Output
+    Reports the installed version of Perl
+
+    Reports Perl modules required by BlockCountries that are not installed
+    or below minimum required version
+
+    Reports iptables/ip6tables version, path consistency and configuration
+    -path value
+
+    Reports if a symlink is required for BlockCountries to find the Perl
+    interpreter
+
+    Reports cpan command used to update/install modules.  However,
+    obtaining modules from your Perl packager/distribution is prefered.
+
+    Reports BlockCountries configuration file search list, and if a
+    file exists in each one.
+
+NOTE:
+    Some failures abort checking.  Re-run until no issues are reported.
+
+exit status
+    0 if all checks pass
+    1 if some check(s) fail
+
+EOF
+            exit 0
             ;;
         \?)
             echo "Invalid option: -$OPTARG" >&2
-            echo "Usage: `basename $0` [-v]"
+            echo "Usage: `basename $0` -h for usage" 
             exit 1
             ;;
     esac
@@ -68,23 +117,25 @@ NEWPERL=
 
 echo ""
 
-needs                         5.008008 # Perl version
-needs Errno                   1.0901
-needs File::Basename          2.74
+# Update with BlockCountries needs -modules
+
+needs                         5.8.8 # Perl version
 needs Carp                    1.3301
 needs Cwd                     3.33
+needs Errno                   1.0901
+needs Fcntl                   1.05
+needs File::Basename          2.74
 needs File::Path              2.08
 needs File::Temp              0.2304
-needs Fcntl                   1.05
 needs IO::Compress::Zip       2.069
 needs IO::Uncompress::Gunzip  2.064
-needs Locale::Country         3.37
 needs LWP::Simple             6.00
+needs Locale::Country         3.37
+needs Net::Domain            2.23
 needs Net::IP                1.25
 needs NetAddr::IP            4.044
-needs Net::Domain            2.23
-needs Parse::Syslog          1.10
 needs POSIX                  1.09
+needs Parse::Syslog          1.10
 needs Regexp::IPv6           0.03
 needs Socket                 2.006
 needs Storable               2.30
@@ -130,7 +181,13 @@ echo ""
 OK=1
 patha=
 pgma=
-for ipt in iptables ip6tables iptables-restore ip6tables-restore iptables-save ip6tables-save; do
+ip4tables="iptables  iptables-restore  iptables-save"
+ip6tables="ip6tables ip6tables-restore ip6tables-save"
+if [ -z "$IP6" ]; then
+    ip6tables=
+fi
+
+for ipt in $ip4tables $ip6tables; do
 
     if ! which $ipt >/dev/null 2>&1 ; then
         echo "$ipt not found in $PATH"
@@ -164,6 +221,63 @@ fi
 if [ "$path" != '/sbin' ]; then
     echo ""
     echo "Be sure to include \"-path $path\" in your configuration file"
+fi
+
+# Extract config search list from BlockCountries & report
+
+BC="`dirname $0`/BlockCountries"
+if [ -f "$BC" ]; then
+    echo ""
+    echo "Inspecting configuration of $BC"
+    perl <<EOF
+use warnings;
+use strict;
+
+use File::Basename;
+
+`sed -n -e'/my @CFGFILE =/,/};/p' $BC`
+
+my @dirs;
+
+my \$maxd = 0;
+\$maxd = ((length dirname \$_) > \$maxd? length dirname \$_ : \$maxd) foreach( 'Directory/x', 'xENVxBlockCountriesCFGx/x', @CFGFILE );
+my \$maxf = 0;
+\$maxf = ((length basename \$_) > \$maxf? length basename \$_ : \$maxf) foreach( 'x/File', @CFGFILE );
+\$maxf = length( \$ENV{BlockCountriesCFG} ) if( defined \$ENV{BlockCountriesCFG} && length( \$ENV{BlockCountriesCFG} ) > \$maxf );
+print ("\nConfiguration file search list:\n");
+
+printf( "  %-*s %-*s Status\n", \$maxd, "Directory", \$maxf, "File" ); 
+printf( "  %-*s %-*s %s\n", \$maxd, '\$ENV{BlockCountriesCFG}', \$maxf, (\$ENV{BlockCountriesCFG} || ''),
+         (\$ENV{BlockCountriesCFG} && -f \$ENV{BlockCountriesCFG})? '[Exists]':
+                (\$ENV{BlockCountriesCFG} && -d dirname( \$ENV{BlockCountriesCFG} )? '[Directory exists]':'[Not present]' ) );
+
+foreach my \$file (@CFGFILE) {
+    my \$dir = dirname \$file;
+    my \$rt = '';
+    printf("  %-*s ", \$maxd, \$dir );
+    if( \$dir =~ /^[.]/ ) {
+        printf( "%-*s [Not checked, runtime value unknown]\n", \$maxf, '' );
+        next;
+    }
+    if( \$dir =~ /^[~]/ ) {
+        \$dir = \$ENV{HOME} || (getpwuid(\$<))[7];
+        \$file = "\$dir/" . basename \$file;
+        \$rt = ", assuming runtime \$dir"
+
+    }
+    if( -f \$file && ! -x \$file ) {
+        printf( "%-*s [Exists\$rt]\n", \$maxf, basename( \$file ) );
+    } elsif( -d \$dir ) {
+        printf( "%-*s [Directory exists\$rt]\n", \$maxf, '' );
+    } else {
+        printf( "%-*s [Not present\$rt]\n", \$maxf, '' );
+    }
+}
+print( "\nThe first file found will be used at runtime.\nUse BlockCountries config to determine which file is selected.\n" );
+exit;
+EOF
+else
+    echo "BlockCountries not found in `dirname $0`"
 fi
 
 echo ""

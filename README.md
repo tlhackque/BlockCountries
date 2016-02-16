@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.16 more bcinstall improvements. Only inspect protocol config if enabled.
+
 V2.15 bcinstall improvements. iptables-restore format debug data.
 
 V2.14 Cosmetic logging improvements

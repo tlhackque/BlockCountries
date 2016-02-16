@@ -136,6 +136,7 @@ my %RIRS = ( # Should be stable; http: URIs would be prefered for IF_MODIFIED su
 # The following are either part of base perl, or available on CPAN
 # Commented-out modules are used, but not read until a command requires them.
 
+use 5.8.8;
 use Errno;
 use File::Basename;
 use Carp;
@@ -189,8 +190,9 @@ use Text::ParseWords;
 # 2.13      Add zip compression to debug log when possible.  Log start/stop to syslog.
 # 2.14      Cosmetic logging improvements.
 # 2.15      Include ipt-save format data in -d to ease reproducing issues
+# 2.16      Don't inspect a protocol's configuration if it's not enabled.  Add -modules for debugging.
 
-my $VERSION = '2.15';
+my $VERSION = '2.16';
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -280,7 +282,7 @@ if( $cmd eq 'config' ) {
 # Collect all arguments here, even though they are mostly for start
 # This allows detailed status
 
-my( $debug, $verbose, $usezip, $syslog, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules, $ipv4, $ipv6, $conntrack,
+my( $debug, $verbose, $modules, $usezip, $syslog, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules, $ipv4, $ipv6, $conntrack,
     @loglimits, @atports, @auports, @atportso, @auportso, @aips, @dips );
 
 @loglimits = ( '1/minute', 10 );
@@ -348,6 +350,14 @@ while( (my $arg = shift) ) {
         }
         if( $arg eq '-z' ) {
             $usezip = 1;
+            next;
+        }
+        if( $arg eq '-modules' ) {
+            $modules = 1;
+            next;
+        }
+        if( $arg eq '-nomodules' ) {
+            $modules = 0;
             next;
         }
         if( $arg eq '-noz' ) {
@@ -521,6 +531,42 @@ if( $debug ) {
                     POSIX::strftime( '%A %e-%b-%Y %T %Z', localtime( time ) ), $argstring );
 }
 
+if( ($modules || ($debug && !defined $modules)) && seek( DATA, 0, SEEK_SET ) ) {
+    # Report any module used by any command
+    # Caution: may mask or change some bugs, so -d -nomodules if it does...
+
+    my %modules = ( 'IO::Compress::Zip' => 1 ); # Not detected by regexp
+    my $max = 0;
+
+    while( defined( my $line = <DATA> ) ) {
+        last if( $line =~ /^__END__$/ );
+        next unless( $line =~ m/^\s*(?:require|use)\s+([^ (;]+)/ );
+        my $mod = $1;
+        next if( $mod =~ /(?:warnings|strict|overload)$/ );
+        next if( $mod =~ /^\d+\.\d+\.\d+$/ );
+        $modules{$mod} = 1;
+        $max = length( $mod ) if( length $mod > $max );
+    }
+    my $needs = $cmd eq 'needs'? 'needs ': ''; # Generate bcinstall function calls
+
+    printf STDERR ( "Modules used by $prog\n-----------------%s\n",
+                    '-' x length $prog ) unless( $needs );
+    printf STDERR ( "$needs %-*s% vd\n", $max, ($needs? '' : 'Perl'), $^V );
+
+    foreach my $mod (sort keys %modules) {
+        eval "require $mod";
+        printf STDERR ( "$needs %-*s ", $max, $mod );
+        if( $@ ) {
+            print STDERR ( "Not found\n" );
+        } else {
+            my $ver = eval "\$${mod}::VERSION";
+            printf STDERR ( "%s\n", ($@ || !defined $ver)? "undef": $ver );
+        }
+    }
+    print STDERR ( "\n" );
+    exit if( $needs );
+}
+
 @argv = ();
 
 sub finish {
@@ -601,6 +647,9 @@ my %IP = (
 {
     for my $v (keys %IP) {
         my $ipv = $IP{$v};
+
+        next unless( $ipv->{ENABLED} );
+
         #                New         Old        Default
         my @chains = ( 'BLOCKCC0', 'BLOCKCC1' );
 
@@ -1860,6 +1909,8 @@ if( $debug ) {
         }
     }
     foreach my $ipv (sort values %IP) {
+        next unless( $ipv->{ENABLED} );
+
         printf STDERR ( "\nIPv%s configuration:\n------------------\n", $ipv->{VERSION} );
         foreach my $item (sort keys %$ipv) {
             next if( $item eq 'VERSION' );
