@@ -556,13 +556,13 @@ if( ($modules || ($debug && !defined $modules)) && seek( DATA, 0, SEEK_SET ) ) {
     }
     my $needs = $cmd eq 'needs'? 'needs ': ''; # Generate bcinstall function calls
 
-    printf STDERR ( "Modules used by $prog\n-----------------%s\n",
+    printf STDERR ( "Modules used by $prog\n----------------%s\n",
                     '-' x length $prog ) unless( $needs );
-    printf STDERR ( "$needs %-*s% vd\n", $max, ($needs? '' : 'Perl'), $^V );
+    printf STDERR ( "$needs%-*s% vd\n", $max, ($needs? '' : 'Perl'), $^V );
 
     foreach my $mod (sort keys %modules) {
         eval "require $mod";
-        printf STDERR ( "$needs %-*s ", $max, $mod );
+        printf STDERR ( "$needs%-*s ", $max, $mod );
         if( $@ ) {
             print STDERR ( "Not found\n" );
         } else {
