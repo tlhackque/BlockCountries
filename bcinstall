@@ -148,7 +148,7 @@ for ipt in iptables ip6tables iptables-restore ip6tables-restore iptables-save i
             pgma="$ipt"
         else
             if [ "$path" != "$patha" ]; then
-                echo "$ipt must be in the same directory ($patha) as $pgma $path"
+                echo "$ipt must be in the same directory ($patha) as $pgma"
                 OK=
             fi
         fi
