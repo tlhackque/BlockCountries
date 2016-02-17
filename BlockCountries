@@ -87,7 +87,8 @@ my @CFGFILE = qw{ ./BlockCountries
 my $ZONEDIR = '/root/blockips';  # zonedir
 
 my $LOGPFX = '[Blocked CC]: ';   # logpfx
-my $LOG = '/var/log/messages*';  # logfile Note: This is a wildcard to handle log rotation.  .gz files will decompressed on the fly and processed.
+my $LOG = '/var/log/messages*';  # logfile Note: This is a wildcard to handle log rotation.  .gz files will decompressed on the
+                                 # fly and processed.
 my $LOGPGM = 'kernel';           # logpgm
 my $LOGLEVEL = ''; # loglevel To force a non-default logging priority, specify here (e.g. NOTICE).
                    # Can be a number or name.  Leave as '' for the default. (Recommended)
@@ -175,12 +176,15 @@ use Text::ParseWords;
 # 2.0       Obtain data directly from registries, support IPV6, inline short chains, more branching, optimize rule deletion.
 #           Remove need for iptables file.  Store country data in binary.
 #           N.B. If your are running an older version of Perl, you may need to update Socket from cpan.
-# 2.1       Update for extended statistics file format defined by https://www.arin.net/knowledge/statistics/nro_extended_stats_format.pdf
+# 2.1       Update for extended statistics file format defined by
+#           https://www.arin.net/knowledge/statistics/nro_extended_stats_format.pdf
 # 2.2       Switch to conntrack --ctstate to avoid warnings.
-# 2.3       Add support for passive mode FTP to avoid requring FTP_PASSIVE.environment variable. Make conntrack use optional under -newstate
+# 2.3       Add support for passive mode FTP to avoid requring FTP_PASSIVE.environment variable. Make conntrack use optional
+#           under -newstate
 # 2.4       Clarify -permitonly and rule placement/priorities in help
 # 2.5       Fix uninitialized variable $cmd with no arguments.
-# 2.6       Add --version commmand, syntax cleanup for print & printf.  Remove help switches due to uninitialized configuration variables.
+# 2.6       Add --version commmand, syntax cleanup for print & printf.  Remove help switches due to uninitialized configuration
+#           variables.
 # 2.7       Add LSB init block.
 # 2.8       Add LOGLEVEL configuration option.
 # 2.9       Simplify configuration.
@@ -191,9 +195,17 @@ use Text::ParseWords;
 # 2.14      Cosmetic logging improvements.
 # 2.15      Include ipt-save format data in -d to ease reproducing issues
 # 2.16      Don't inspect a protocol's configuration if it's not enabled.  Add -modules for debugging.
-# 2.17      Some future-proofing for -modules.
+# 2.17      Some future-proofing for -modules. Add -nopprotect for obscure configurations.  Check all close() errors.
+#           Verify that perlcritic's complaints are invalid.
 
 my $VERSION = '2.17';
+
+# Make perlcritic happy:
+# 1) The special things that IO::Interactive checks for aren't worth another module as they don't apply
+# 2) Prototype *is* exactly what we want; is_tty is replacing the unary operator -t
+# This centralizes all the tests for -t so if IO::Interactive::is_interactive is ever needed, it can go here.
+
+sub is_tty( * ) { return -t shift; } ## no critic
 
 my $IPv4_re = qr/((25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2})[.](25[0-5]|2[0-4][0-9]|[0-1]?[0-9]{1,2}))/;
 
@@ -224,7 +236,7 @@ my %cfg = ( # switches only allowed in config file
 
 foreach my $CFGFILE (($ENV{BlockCountriesCFG}, @CFGFILE)) {
     if( defined $CFGFILE && -e $CFGFILE && !-x $CFGFILE ) {
-        open( my $fh, '<', $CFGFILE ) or die( "Can't open $CFGFILE:$!" );
+        open( my $fh, '<', $CFGFILE ) or die( "Can't open $CFGFILE: $!" );
         my @cfg;
         while( <$fh> ) {
             s/\s*#.*$//;
@@ -233,7 +245,7 @@ foreach my $CFGFILE (($ENV{BlockCountriesCFG}, @CFGFILE)) {
             next unless length;
             push @cfg, parse_line( '\s+', 0, $_ );
         }
-        close $fh;
+        close( $fh ) or die( sprintf( "%s: %s\n", $CFGFILE, $! ) );
         $currentCFGFILE = realpath( $CFGFILE );
 
         # Check for immediate configuration variables and set them here
@@ -283,11 +295,12 @@ if( $cmd eq 'config' ) {
 # Collect all arguments here, even though they are mostly for start
 # This allows detailed status
 
-my( $debug, $verbose, $modules, $usezip, $syslog, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules, $ipv4, $ipv6, $conntrack,
-    @loglimits, @atports, @auports, @atportso, @auportso, @aips, @dips );
+my( $debug, $verbose, $modules, $protect, $usezip, $syslog, @iso, %iso, $update, $log, $days, $host, $permitonly, $outrules,
+    $ipv4, $ipv6, $conntrack, @loglimits, @atports, @auports, @atportso, @auportso, @aips, @dips );
 
 @loglimits = ( '1/minute', 10 );
 $syslog = 1;
+$protect = 1;
 
 # Parse port number or name
 
@@ -359,6 +372,14 @@ while( (my $arg = shift) ) {
         }
         if( $arg eq '-nomodules' ) {
             $modules = 0;
+            next;
+        }
+        if( $arg eq '-protect' ) {
+            $protect = 1;
+            next;
+        }
+        if( $arg eq '-noprotect' ) {
+            $protect = 0;
             next;
         }
         if( $arg eq '-noz' ) {
@@ -499,13 +520,32 @@ my $argstring = join(' ', map {
                      }
                      ( $0, ( splice( @argv, 0, @ARGV - $argc ), $cmd, splice( @argv, -$argc ) ) ) );
 
+# Analyze a pipe'd handle error return and return a suitable text string
+sub pCloseError {
+    my $reason = '';
+
+    if( $! ) {
+        $reason = " $!";
+    } else {
+        if( $? == -1 ) {
+            $reason .= " Unknown reason";
+        } else {
+            $reason .= sprintf( " killed by signal %u", $? & 127 ) if( $? & 127 );
+            $reason .= sprintf( " exit code %d", $? >> 8 ) if( $? >> 8 );
+            $reason .= " core dumped" if( $? & 128 );
+        }
+    }
+
+    return $reason;
+}
+
 if( $debug ) {
     require POSIX;
     require File::Temp;
 
     $zipavail = eval { require IO::Compress::Zip };
 
-    $usezip = $zipavail unless( defined $usezip || -t $stderr );
+    $usezip = $zipavail unless( defined $usezip || is_tty $stderr );
 
     # Attach STDERR to a tempfile so iptables output can be captured.
     # The real STDERR is saved and the output from it and the BC::IO logging copied to it
@@ -516,23 +556,24 @@ if( $debug ) {
     $stderr = $std;
     close( STDERR ); # Required to re-open in update mode
 
-    open( STDERR, "+>&" . fileno( $errf ) ) or die( "Can't redirect STDERR: $!\n" );
+    open( STDERR, "+>&" . fileno( $errf ) ) or ## no critic
+        die( "Can't redirect STDERR: $!\n" );
 
     if( $usezip ) {
-        if( $zipavail && ! -t $stderr ) {
+        if( $zipavail && ! is_tty $stderr ) {
             print( "Debug log will be written as a .zip archive\n" );
         } elsif( !$zipavail ) {
             print( "IO::Compress::Zip must be installed to use zip, debug log will be written as text\n" );
         } else {
-            print ( "Debug log will be written as text: won't zip to a terminal\n" );
+            print( "Debug log will be written as text: won't zip to a terminal\n" );
         }
     }
 
-    printf STDERR ( "Starting version $VERSION on %s\nExecuting %s\n\n",
+    printf STDERR ( "Version $VERSION invoked on %s\nExecuting %s\n\n",
                     POSIX::strftime( '%A %e-%b-%Y %T %Z', localtime( time ) ), $argstring );
 }
 
-if( ($modules || ($debug && !defined $modules)) && seek( DATA, 0, SEEK_SET ) ) {
+if( ($modules || $cmd eq 'needs' || ($debug && !defined $modules)) && seek( DATA, 0, SEEK_SET ) ) {
     # Report any module used by any command
     # Caution: may mask or change some bugs, so -d -nomodules if it does...
 
@@ -561,12 +602,12 @@ if( ($modules || ($debug && !defined $modules)) && seek( DATA, 0, SEEK_SET ) ) {
     printf STDERR ( "$needs%-*s% vd\n", $max, ($needs? '' : 'Perl'), $^V );
 
     foreach my $mod (sort keys %modules) {
-        eval "require $mod";
+        eval "require $mod";                         ## no critic
         printf STDERR ( "$needs%-*s ", $max, $mod );
         if( $@ ) {
             print STDERR ( "Not found\n" );
         } else {
-            my $ver = eval "\$${mod}::VERSION";
+            my $ver = eval "\$${mod}::VERSION";      ## no critic
             printf STDERR ( "%s\n", ($@ || !defined $ver)? "undef": $ver );
         }
     }
@@ -583,7 +624,7 @@ sub finish {
 
         seek( STDERR, 0, SEEK_CUR ) or croak( "seek: $!\n" );
 
-        printf STDERR ( "\n-------------------------------------------\nComplete on %s",
+        printf STDERR ( "\n---------------------------------------------\nComplete on %s\n",
                         POSIX::strftime( '%A %e-%b-%Y %T %Z', localtime( time ) ) );
 
         # Copy spooled output for STDERR to real STDERR
@@ -591,7 +632,7 @@ sub finish {
         seek( STDERR, 0, SEEK_SET ) or die( "seek: $!\n" );
 
         my $fh = $stderr;
-        if( $debug && $zipavail && $usezip && ! -t $stderr ) {
+        if( $debug && $zipavail && $usezip && ! is_tty $stderr ) {
             no warnings 'once';
             $fh = IO::Compress::Zip->new( $stderr,
                                           AutoClose => 0,
@@ -660,7 +701,7 @@ my %IP = (
         #                New         Old        Default
         my @chains = ( 'BLOCKCC0', 'BLOCKCC1' );
 
-        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( print( $ipv->{IPT} . ": $!\n" ), return undef );
+        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( print( $ipv->{IPT} . ": $!\n" ), return );
 
         my( $i, $o, $f ) = ( $ipv->{IHOOK}, $ipv->{OHOOK}, $ipv->{FHOOK}, );
         my $HOOK = qr/^($i|$o|$f|INPUT|OUTPUT|FORWARD)$/;
@@ -686,7 +727,7 @@ my %IP = (
                 }
             }
         }
-        close $ipt;
+        close( $ipt ) or ( printf( "%s: %s\n", $ipv->{IPT}, pCloseError() ), return );
         $ipv->{IHOOK} = 'INPUT' unless( $ipv->{ihookvalid} );
         $ipv->{OHOOK} = 'OUTPUT' unless( $ipv->{ohookvalid} );
         $ipv->{FHOOK} = 'FORWARD' unless( $ipv->{fhookvalid} );
@@ -756,6 +797,8 @@ Arguments for start-class commands are:
  -path /sbin        Path for iptables utilities (use in the configuration file)
  -permitonly        Listed countries will be permited, all others denied.
                     Put in -permitonly in the configuration file so status and start are consistent.
+ -protect           Protect private (RFC1918) addresses from filtering (default)
+ -noprotect         Don\'t
  -syslog            Log start/stop to syslog (default)
  -nosyslog          Don\'t log to syslog
  -blockout          Also generate rules to block output & forwarded-output.
@@ -911,7 +954,7 @@ sub success {
     } if( $syslog );
     return 1 if( $ENV{CRONJOB} );
 
-    if( -t STDOUT ) {
+    if( is_tty STDOUT ) {
         print( "\033[60G[\033[1;32m OK \033[0;39m]\n" );
     } else {
         print( " [ OK ]\n" );
@@ -927,7 +970,7 @@ sub failure {
     } if( $syslog );
     return 0 if( $ENV{CRONJOB} );
 
-    if( -t STDOUT ) {
+    if( is_tty STDOUT ) {
         print( "\033[60G[\033[1;31m FAILED \033[0;39m]\n" );
     } else {
         print( " [ FAILED ]\n" );
@@ -941,7 +984,7 @@ sub running {
     foreach my $ipv (values %IP) {
         next unless( $ipv->{ENABLED} );
 
-        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( print( $ipv->{IPT} . ": $!\n" ), return undef );
+        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( print( $ipv->{IPT} . ": $!\n" ), return );
 
         my( $i, $o, $f ) = ( $ipv->{IHOOK}, $ipv->{OHOOK}, $ipv->{FHOOK}, );
         my %txt = (
@@ -965,7 +1008,7 @@ sub running {
                 }
             }
         }
-        close $ipt;
+        close( $ipt ) or ( printf( "%s: %s\n", $ipv->{IPT}, pCloseError() ), return );
     }
 
     if( $ipv4 && $ipv6 ) {
@@ -1069,7 +1112,7 @@ sub list {
         chomp;
         $ccs{$_} = 1;
     }
-    close $lh;
+    close( $lh ) or print( "$ZONEDIR/cclist.txt: $!\n" );
 
     print( "Recognized country codes:\n" );
 
@@ -1081,12 +1124,12 @@ sub list {
     return 1;
 }
 
-sub startUpdate( $ ) {
+sub startUpdate {
     my $ipv = shift;
 
     my $iptr = $ipv->{IPTR};
 
-    tie( my $fh, 'BC::IO', $debug,  '|-', $iptr,  '-n' ) or ( print( "Unable to run $iptr: $!\n" ), return undef );
+    tie( my $fh, 'BC::IO', $debug,  '|-', $iptr,  '-n' ) or ( print( "Unable to run $iptr: $!\n" ), return );
 
     if( $debug ) {
         if( $ENV{PATH} && !( $ifcfgDone && $unameDone ) ) {
@@ -1101,22 +1144,22 @@ sub startUpdate( $ ) {
                             next unless( $ifp =~ m,/ip a$, || m/ (?:HW)?addr[: ]/ );
                             $fh->log( "%s", $_ );
                         }
-                        close( $ifc );
+                        close( $ifc ) or $fh->log( "%s: %s\n", $ifp, pCloseError() );
                     } else {
-                        $fh->log( "Unable to run $ifp: ($?) $!\n" );
+                        $fh->log( "Unable to run $ifp: $!\n" );
                     }
                     $fh->log( "\n" );
                 }
                 if( !$unameDone && -x "$dir/uname" ) {
                     $unameDone = 1;
                     $fh->log( "uname -a\n--------\n" );
-                    if( open( my $unm, '-|', "uname -a 2>&1" ) ) {
+                    if( open( my $unm, '-|', "$dir/uname -a 2>&1" ) ) {
                         while( <$unm> ) {
                             $fh->log( "%s", $_ );
                         }
-                        close( $unm );
+                        close( $unm ) or $fh->log( "%s: %s\n", "$dir/uname", pCloseError() );
                     } else {
-                        $fh->log( "Unable to run $dir/uname: ($?) $!\n" );
+                        $fh->log( "Unable to run $dir/uname: $!\n" );
                     }
                     $fh->log( "\n" );
                 }
@@ -1125,22 +1168,22 @@ sub startUpdate( $ ) {
 
         $fh->log( "\nCurrent IPv%u rules\n------------------\n\n", $ipv->{VERSION} );
         open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or
-            ( die( $ipv->{IPT} . ": ($?) $!\n" ) );
+            ( die( $ipv->{IPT} . ": $!\n" ) );
 
         while( <$ipt> ) {
             $fh->log( "%s", $_ );
         }
-        close( $ipt );
+        close( $ipt ) or $fh->log( "%s: %s\n", $ipv->{IPT}, pCloseError() );
 
         $fh->log( "-------- $ipv->{IPTS} --------\n" );
         undef $ipt;
         open( $ipt, '-|', $ipv->{IPTS} . " 2>&1" ) or
-            ( die( $ipv->{IPTS} . ": ($?) $!\n" ) );
+            ( die( $ipv->{IPTS} . ": $!\n" ) );
 
         while( <$ipt> ) {
             $fh->log( "%s", $_ );
         }
-        close( $ipt );
+        close( $ipt ) or $fh->log( "%s: %s\n", $ipv->{IPTS}, pCloseError() );
 
         $fh->log( "\nGenerating rules for %s\n---------------------%s\n",
                   $iptr, '-' x length( $iptr ) );
@@ -1150,26 +1193,13 @@ sub startUpdate( $ ) {
     return $fh;
 }
 
-sub commitUpdate( $$ ) {
+sub commitUpdate {
     my( $fh, $ipv ) = @_;
 
     print $fh ( "COMMIT\n" );
     unless( close $fh ) {
-        my $reason = '';
+        my $reason = 'Rules update failed:' . pCloseError() . sprintf( " at line %u\n", $fh->line );
 
-        if( $! ) {
-            $reason = " $!";
-        } else {
-            if( $? == -1 ) {
-                $reason .= " Unknown reason";
-            } else {
-                $reason .= sprintf( " killed by signal %u", $? & 127 ) if( $? & 127 );
-                $reason .= sprintf( " exit code %d", $? >> 8 ) if( $? >> 8 );
-                $reason .= " core dumped" if( $? & 128 );
-            }
-        }
-        $reason .= sprintf( " at line %u", $fh->line );
-        $reason = 'Rules update failed:' . "$reason\n";
         print STDOUT ( $reason ) if( $debug );
         die( $reason );
 
@@ -1179,17 +1209,17 @@ sub commitUpdate( $$ ) {
     if( $debug ) {
         $fh->log( "\n----------------------\nRules update succeeded\n----------------------\n\n" .
                   "New IPv%u rules\n--------------\n\n", $ipv->{VERSION} );
-        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or ( die( $ipv->{IPT} . ": ($?) $!\n" ) );
+        open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or ( die( $ipv->{IPT} . ": $!\n" ) );
         while( <$ipt> ) {
             $fh->log( "%s", $_ );
         }
-        close( $ipt );
+        close( $ipt ) or $fh->log( "%s: %s\n", $ipv->{IPT}, pCloseError() );
     }
 
     return 1;
 }
 
-sub defchain( $\%$;$ ) {
+sub defchain {
     my $fh = shift;
     my $declared = shift;
     my $chain = shift;
@@ -1210,7 +1240,7 @@ sub defchain( $\%$;$ ) {
 
 # Delete all our rules from a chain
 
-sub deleterules( $\%$$)  {
+sub deleterules {
     my $ipv = shift;
     my $declared = shift;
     my $MAIN = shift;
@@ -1229,7 +1259,7 @@ sub deleterules( $\%$$)  {
         if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) { # Chain INPUT-HOOK (1 references)
             $chain = $1;
             if( $chain =~ /^$CHAIN-/ ) { # A (sub)chain of ours, flush contents, queue deletion
-                defchain( $fh, %$declared, $chain, 1 );
+                defchain( $fh, $declared, $chain, 1 );
                 print $fh ( "-F $chain\n" );
             }
         } elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) { # BLOCKCC1-I all -- 0.0.0.0/0  0.0.0.0/0
@@ -1242,7 +1272,7 @@ sub deleterules( $\%$$)  {
             }
         }
     }
-    close $ipt;
+    close $ipt or $fh->log( "%s: %s\n", $ipv->{IPT}, pCloseError() );
 
     # All our chains are empty and the hook rule is gone.
     # It's now legal to delete the (sub)chain since refcounts are zero
@@ -1277,11 +1307,14 @@ sub ipcmp {
 sub start {
     print( "Starting blocked countries IP filter: " ) unless( $ENV{CRONJOB} );
 
-    File::Path::make_path( $ZONEDIR, { mode => 0771 } ) unless( -d $ZONEDIR );
+    File::Path::make_path( $ZONEDIR, { mode => oct( 771 ) } ) unless( -d $ZONEDIR );
 
     # Local subnets - external firewalls prevent them from showing up here, but
     # a bogus zone file could do damage.
-    unshift @aips, NetAddr::IP->new( '192.168.0.0/16' ), NetAddr::IP->new( '172.16.0.0/12' ), NetAddr::IP->new( '10.0.0.0/8' );
+    unshift( @aips, ( NetAddr::IP->new( '192.168.0.0/16' ),
+                      NetAddr::IP->new( '172.16.0.0/12' ),
+                      NetAddr::IP->new( '10.0.0.0/8' ) ) )
+        if( $protect );
 
     # Optimize  IP lists
     @aips = sort ipcmp NetAddr::IP::Compact( @aips );
@@ -1409,16 +1442,17 @@ sub start {
                 }
                 $n++;
             }
+            close( $rirfile ) or ( print( "\nClose $db: $!" ), return failure );
             print( "\nExtracted ", $r4+$r6, " ranges ($r4 IPV4, $r6 IPV6) from $n records from $db " ) if( $debug );
         }
 
         # Index of all country codes (for LIST, so the RIR files don't need to be scanned.)
 
-        open( my $idx, '>', "$ZONEDIR/cclist.txt" ) or ( print( "Can't open index: $!\n" ), return 0 );
+        open( my $idx, '>', "$ZONEDIR/cclist.txt" ) or ( print( "\nCan't open index: $!\n" ), return 0 );
         for my $cc (sort keys %ccavail) {
             print $idx ( "$cc\n" );
         }
-        close $idx;
+        close( $idx ) or ( print( "\nClose $ZONEDIR/cclist.txt: $!" ), return failure );
 
         # Compress each CC's data & save as a binary file
 
@@ -1496,12 +1530,12 @@ sub start {
 
         # Delete any lingering references / parts of new chain
 
-        deleterules( $ipv, %declared, 'NEWCHAIN', $fh );
+        deleterules( $ipv, \%declared, 'NEWCHAIN', $fh );
 
 
         # (Log & ) drop chains
 
-        defchain( $fh, %declared, "${NEWCHAIN}-DLOG" );
+        defchain( $fh, \%declared, "${NEWCHAIN}-DLOG" );
 
         if( $log ) {
             # Note that we can not provide a per-country log prefix due to compaction.
@@ -1518,7 +1552,7 @@ sub start {
 
         my( $exceptions, $xrules ) = (0,0);
         foreach my $pchain ( @genlist ) { # Direction codes: I or I O
-            defchain( $fh, %declared, "${NEWCHAIN}-${pchain}" );
+            defchain( $fh, \%declared, "${NEWCHAIN}-${pchain}" );
             if( $conntrack ) {
                 print $fh ( "-A ${NEWCHAIN}-$pchain -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n" );
             } else {
@@ -1585,7 +1619,7 @@ sub start {
             # Hook tables are guaranteed to exist because we checked earlier
 
             my $hook = $ipv->{$pchain.'HOOK'};
-            defchain( $fh, %declared, $hook, 0 ) if( $hook =~ /^(?:INPUT|OUTPUT|FORWARD)$/ );
+            defchain( $fh, \%declared, $hook, 0 ) if( $hook =~ /^(?:INPUT|OUTPUT|FORWARD)$/ );
             my $mrules = 0;
 
             foreach my $ipblock (@addresses) {
@@ -1596,8 +1630,8 @@ sub start {
                 if( $v == 4 ) {
                     ($subchain) = ($ipblock =~ /^(\d+)\./);
                     unless( $subchains{$subchain} ) {
-                        $subchains{$subchain}{define} =
-                          "-A ${NEWCHAIN}-${pchain} -$match ${subchain}.0.0.0/8 -g ${NEWCHAIN}-${pchain}-${subchain}\n";  # Chain - branch on 1st octet to subchain
+                        $subchains{$subchain}{define} =  # Chain - branch on 1st octet to subchain
+                          "-A ${NEWCHAIN}-${pchain} -$match ${subchain}.0.0.0/8 -g ${NEWCHAIN}-${pchain}-${subchain}\n";
                     }
                 } else {
                     my $pfx = $ipblock->masklen;
@@ -1619,8 +1653,8 @@ sub start {
                         my $submask = $subchain;
                         $submask =~ m/:([[:xdigit:]]+)$/;
                         $submask .= '0' x (4-length($1)); # Left-justify mask
-                        $subchains{$subchain}{define} =
-                          "-A ${NEWCHAIN}-${pchain} -$match ${submask}::0/24 -g ${NEWCHAIN}-${pchain}-${subchain}\n";  # Chain - branch on 1st 32 bits to subchain
+                        $subchains{$subchain}{define} =   # Chain - branch on 1st 32 bits to subchain
+                          "-A ${NEWCHAIN}-${pchain} -$match ${submask}::0/24 -g ${NEWCHAIN}-${pchain}-${subchain}\n";
                     }
                 }
                 $subchains{$subchain}{length}++;
@@ -1635,14 +1669,15 @@ sub start {
             foreach my $subchain (keys %subchains) {
                 if( $subchains{$subchain}{length} == 1 ) {
                     # Inline this subchain, as it is less expensive than the small chain
-                    print $fh ( "-A ${NEWCHAIN}-${pchain} -$match " . (@{$subchains{$subchain}{blocks}})[0] . " -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
+                    print $fh ( "-A ${NEWCHAIN}-${pchain} -$match " . (@{$subchains{$subchain}{blocks}})[0] . " -j ",
+                                ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
                     $inlined++;
                     $mrules++;
                     next;
                 }
                 # Either for data or dispatch to child chains (or both), we need this subchain
 
-                defchain( $fh, %declared, "${NEWCHAIN}-${pchain}-$subchain", 0 );
+                defchain( $fh, \%declared, "${NEWCHAIN}-${pchain}-$subchain", 0 );
                 print $fh ( $subchains{$subchain}{define} );
 
                 if( $subchains{$subchain}{length} > 50 ) { # Empirical threshold.
@@ -1668,11 +1703,13 @@ sub start {
                                 $kids{$kid} = [];
                                 next;
                             }
-                            defchain( $fh, %declared, "${NEWCHAIN}-${pchain}-${subchain}-${kid}", 0 );
-                            print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match ${subchain}.${kid}.0.0/16 -g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n" );
+                            defchain( $fh, \%declared, "${NEWCHAIN}-${pchain}-${subchain}-${kid}", 0 );
+                            print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match ${subchain}.${kid}.0.0/16 " .
+                                        "-g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n" );
                             $subchains{$subchain}{length}++;
                             foreach my $ipblock (@{$kids{$kid}}) {
-                                print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
+                                print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ",
+                                            ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
                             }
                             if( $permitonly ) {
                                 print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -j ${NEWCHAIN}-DLOG\n" );
@@ -1691,7 +1728,8 @@ sub start {
                                 $subchains{$subchain}{length}++;
                                 next;
                             }
-                            my( $kid ) = ($ipblock->full =~ /^[[:xdigit:]]{4}:[[:xdigit:]]{2}([[:xdigit:]]{2}:[[:xdigit:]]{2})[[:xdigit:]]{2}:/);
+                            my( $kid ) = ($ipblock->full =~
+                                          /^[[:xdigit:]]{4}:[[:xdigit:]]{2}([[:xdigit:]]{2}:[[:xdigit:]]{2})[[:xdigit:]]{2}:/);
                             push @{$kids{$kid}}, $ipblock;
                         }
                         # Evaluate the child chains.  Inline short ones by pushing them back on the subchain.
@@ -1702,15 +1740,17 @@ sub start {
                                 $kids{$kid} = [];
                                 next;
                             }
-                            defchain( $fh, %declared, "${NEWCHAIN}-${pchain}-${subchain}-${kid}", 0 );
+                            defchain( $fh, \%declared, "${NEWCHAIN}-${pchain}-${subchain}-${kid}", 0 );
                             my $submask = "${subchain}${kid}";
                             $submask =~ tr/://d;
                             $submask .= '0' x (4-(length($submask) % 4)) if( length($submask) %4 ); # Left-justify mask
                             $submask =~ s/([[:xdigit:]]{4})/$1:/g;
-                            print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $submask:0/40 -g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n" );
+                            print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $submask:0/40 " .
+                                        "-g ${NEWCHAIN}-${pchain}-${subchain}-${kid}\n" );
                             $subchains{$subchain}{length}++;
                             foreach my $ipblock (@{$kids{$kid}}) {
-                                print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
+                                print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -$match $ipblock -j ",
+                                            ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
                             }
                             if( $permitonly ) {
                                 print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain}-${kid} -j ${NEWCHAIN}-DLOG\n" );
@@ -1722,7 +1762,8 @@ sub start {
                 }
 
                 foreach my $ipblock (@{$subchains{$subchain}{blocks}}) {
-                    print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $ipblock -j ", ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
+                    print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -$match $ipblock -j ",
+                                ($permitonly? "RETURN\n" : "${NEWCHAIN}-DLOG\n") );
                 }
                 if( $permitonly ) {
                     print $fh ( "-A ${NEWCHAIN}-${pchain}-${subchain} -j ${NEWCHAIN}-DLOG\n" );
@@ -1761,7 +1802,7 @@ sub start {
         }
 
         # Remove old rules
-        deleterules( $ipv, %declared, 'OLDCHAIN', $fh );
+        deleterules( $ipv, \%declared, 'OLDCHAIN', $fh );
 
         commitUpdate( $fh, $ipv );
 
@@ -1784,7 +1825,7 @@ sub stop {
         my $fh = startUpdate( $ipv ) or return failure;
         my %declared;
 
-        deleterules( $ipv, %declared, 'OLDCHAIN', $fh );
+        deleterules( $ipv, \%declared, 'OLDCHAIN', $fh );
 
         commitUpdate( $fh, $ipv );
     }
@@ -1843,7 +1884,7 @@ sub intercepts {
             }
         }
 
-        close $lh;
+        close( $lh ) or printf( "%s: %s\n", $logfile, $! );
     }
 
     return 0 unless %ips;
@@ -1864,6 +1905,7 @@ sub intercepts {
         }
         print( "\nRead $_" ) if( $debug );
     }
+    print( "\n" ) if( $debug );
 
     for my $ip (sort ipcmp map {NetAddr::IP->new($_)} keys %ips) {
         my $ccn;
@@ -1911,7 +1953,7 @@ if( $debug ) {
             while( <$fh> ) {
                 print STDERR ( "    $_" );
             }
-            close( $fh );
+            close( $fh ) or printf STDERR ( "%s: %s\n", $currentCFGFILE, $! );
             print STDERR ( '-' x 80, "\n" );
         }
     }
@@ -1928,7 +1970,7 @@ if( $debug ) {
                     local $/;
                     my %h = map { $_ => 1 } split( /\s+/, <$f> );
                     print STDERR ( ' => ', join( ', ', sort keys %h ) );
-                    close $f;
+                    close( $f ) or ( printf STDERR ( "%s: %s\n", $ipv->{$item}, $! ) );
                 }
             }
             print STDERR ( "\n" );
@@ -1956,7 +1998,7 @@ my $rc = eval {
         return 0;
     }
 
-    if( $debug && -t $stderr ) {
+    if( $debug && is_tty $stderr ) {
         printf( "**** COMMAND WILL NOT BE EXECUTED ****\nLarge output is expected, please add%s %u>file.%s to capture\ ****\n",
                 ($zipavail? ' -z': ''), fileno( STDERR ), ($zipavail? 'zip' : 'log') );
         $debug = 0;
