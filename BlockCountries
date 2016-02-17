@@ -195,7 +195,7 @@ use Text::ParseWords;
 # 2.14      Cosmetic logging improvements.
 # 2.15      Include ipt-save format data in -d to ease reproducing issues
 # 2.16      Don't inspect a protocol's configuration if it's not enabled.  Add -modules for debugging.
-# 2.17      Some future-proofing for -modules. Add -nopprotect for obscure configurations.  Check all close() errors.
+# 2.17      Some future-proofing for -modules. Add -noprotect for obscure configurations.  Check all close() errors.
 #           Verify that perlcritic's complaints are invalid.
 
 my $VERSION = '2.17';
