@@ -197,8 +197,9 @@ use Text::ParseWords;
 # 2.16      Don't inspect a protocol's configuration if it's not enabled.  Add -modules for debugging.
 # 2.17      Some future-proofing for -modules. Add -noprotect for obscure configurations.  Check all close() errors.
 #           Verify that perlcritic's complaints are invalid.
+# 2.18      Minor cleanup & debug determinisim changes.
 
-my $VERSION = '2.17';
+my $VERSION = '2.18';
 
 # Make perlcritic happy:
 # 1) The special things that IO::Interactive checks for aren't worth another module as they don't apply
@@ -305,8 +306,8 @@ $protect = 1;
 # Parse port number or name
 
 sub gport {
-    my $arg = shift;
-    my $prot = shift;
+    my( $arg, $prot ) = @_;
+
     return $arg if( $arg =~  /^\d+$/ );
 
     my $val = getservbyname( $arg, $prot );
@@ -981,7 +982,7 @@ sub failure {
 sub running {
     my %run;
 
-    foreach my $ipv (values %IP) {
+    foreach my $ipv (sort values %IP) {
         next unless( $ipv->{ENABLED} );
 
         open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>/dev/null" ) or ( print( $ipv->{IPT} . ": $!\n" ), return );
@@ -1152,7 +1153,7 @@ sub startUpdate {
                 }
                 if( !$unameDone && -x "$dir/uname" ) {
                     $unameDone = 1;
-                    $fh->log( "uname -a\n--------\n" );
+                    $fh->log( "$dir/uname -a\n--------\n" );
                     if( open( my $unm, '-|', "$dir/uname -a 2>&1" ) ) {
                         while( <$unm> ) {
                             $fh->log( "%s", $_ );
@@ -1220,20 +1221,17 @@ sub commitUpdate {
 }
 
 sub defchain {
-    my $fh = shift;
-    my $declared = shift;
-    my $chain = shift;
-    my $remove = shift;
+    my( $fh, $declared, $chain, $remove ) = @_;
 
-    return if( $declared->{$chain} );
+    unless( $declared->{$chain} ) {
+        # Chains must be declared (even if we're deleting them)
+        # Syntax differs for built-in chains.
 
-    # Chains must be declared (even if we're deleting them)
-    # Syntax differs for built-in chains.
-
-    if( $chain =~ /^(INPUT|OUTPUT|FORWARD)$/ ) {
-        print $fh ( ":$chain ACCEPT [0:0]\n" );
-    } else {
-        print $fh ( ":$chain - [0:0]\n" );
+        if( $chain =~ /^(INPUT|OUTPUT|FORWARD)$/ ) {
+            print $fh ( ":$chain ACCEPT [0:0]\n" );
+        } else {
+            print $fh ( ":$chain - [0:0]\n" );
+        }
     }
     $declared->{$chain} = ($remove? 2 : 1);
 }
@@ -1241,10 +1239,7 @@ sub defchain {
 # Delete all our rules from a chain
 
 sub deleterules {
-    my $ipv = shift;
-    my $declared = shift;
-    my $MAIN = shift;
-    my $fh = shift;
+    my( $ipv, $declared, $MAIN, $fh ) = @_;
 
     my $chain;
 
@@ -1253,31 +1248,41 @@ sub deleterules {
     my( $i, $o, $f ) = ( $ipv->{IHOOK}, $ipv->{OHOOK}, $ipv->{FHOOK}, );
     my $HOOK = qr/^(?:$i|$o|$f)$/;
     my $CHAIN = $ipv->{$MAIN};
+    my @actions;
 
     while( <$ipt> ) {
-        my $line = $_;
-        if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) { # Chain INPUT-HOOK (1 references)
+        my $line = $_;                             # Chain INPUT (policy ACCEPT)
+        if( $line =~ /^Chain\s+([^\s(]+)\s+\(/ ) { # Chain BLOCKCC0-I-103-239 (1 references)
             $chain = $1;
-            if( $chain =~ /^$CHAIN-/ ) { # A (sub)chain of ours, flush contents, queue deletion
+            if( $chain =~ /^${CHAIN}-/ ) { # A (sub)chain of ours, flush contents, queue deletion
                 defchain( $fh, $declared, $chain, 1 );
-                print $fh ( "-F $chain\n" );
+                push @actions, "-F $chain\n";
             }
-        } elsif( $line =~ /^($CHAIN-[^\s]+)\s/ ) { # BLOCKCC1-I all -- 0.0.0.0/0  0.0.0.0/0
+        } elsif( $line =~ /^(${CHAIN}-\S+)\s/ ) { # BLOCKCC1-I all -- 0.0.0.0/0  0.0.0.0/0
             die( "Bad table format at $.\n" ) unless( defined $chain );
             my $target = $1;
             if( $chain =~ $HOOK ) { # Remove each rule in every hook that calls our chain
                 # Must not defchain a hook as it will (mysteriously) empty it,
                 # causing -D to fail (and other chains using the hook to be lost as well.)
-                print $fh ( "-D $chain -j $target\n" );
+                defchain( $fh, $declared, $target, 1 );
+                push @actions, "-D $chain -j $target\n";
             }
         }
     }
     close $ipt or $fh->log( "%s: %s\n", $ipv->{IPT}, pCloseError() );
 
+    # The declarations are done.  Now do the actions.
+    # It should be OK to do the actions in-line with the declarations,
+    # but iptables does it this way...
+
+    print $fh ( shift @actions ) while( @actions );
+
     # All our chains are empty and the hook rule is gone.
     # It's now legal to delete the (sub)chain since refcounts are zero
 
-    foreach my $chain (keys %$declared ) {
+    # The sort shouldn't be necessary, but it allows deterministic debug.
+
+    foreach my $chain (sort keys %$declared ) {
         if( $declared->{$chain} == 2 ) {
             print $fh ( "-X $chain\n" );
             delete $declared->{$chain}; # Allow redeclaration
@@ -1300,6 +1305,22 @@ sub ipcmp {
     $x = $a->masklen <=> $b->masklen;
     return $x if( $x );
     return $a <=> $b;
+}
+
+# Sort function for (sub)chain keys
+# For deterministic debug - and while we're at it, looks.
+
+sub ip4kcmp {
+    my @a = split( /\./, $a );
+    my @b = split( /\./, $b );
+
+    while( @a && @b ) {
+        my $a0 = shift @a;
+        my $b0 = shift @b;
+        my $x = $a0 <=> $b0;
+        return $x if( $x );
+    }
+    return @a <=> @b;
 }
 
 # Start command
@@ -1500,10 +1521,9 @@ sub start {
 
     # Generate the tables for each protocol
 
-    for my $ipv (values %IP) {
+    for my $ipv (sort values %IP) {
         next unless( $ipv->{ENABLED} );
 
-        my $IPT = $ipv->{IPT};
         my $version = $ipv->{VERSION};
         my $NEWCHAIN = $ipv->{NEWCHAIN};
 
@@ -1535,7 +1555,7 @@ sub start {
 
         # (Log & ) drop chains
 
-        defchain( $fh, \%declared, "${NEWCHAIN}-DLOG" );
+        defchain( $fh, \%declared, "${NEWCHAIN}-DLOG", 0 );
 
         if( $log ) {
             # Note that we can not provide a per-country log prefix due to compaction.
@@ -1552,7 +1572,7 @@ sub start {
 
         my( $exceptions, $xrules ) = (0,0);
         foreach my $pchain ( @genlist ) { # Direction codes: I or I O
-            defchain( $fh, \%declared, "${NEWCHAIN}-${pchain}" );
+            defchain( $fh, \%declared, "${NEWCHAIN}-${pchain}", 0 );
             if( $conntrack ) {
                 print $fh ( "-A ${NEWCHAIN}-$pchain -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n" );
             } else {
@@ -1666,7 +1686,7 @@ sub start {
 
             my $kidchains = 0;
             my $inlined = 0;
-            foreach my $subchain (keys %subchains) {
+            foreach my $subchain (sort ip4kcmp keys %subchains) {
                 if( $subchains{$subchain}{length} == 1 ) {
                     # Inline this subchain, as it is less expensive than the small chain
                     print $fh ( "-A ${NEWCHAIN}-${pchain} -$match " . (@{$subchains{$subchain}{blocks}})[0] . " -j ",
@@ -1696,7 +1716,7 @@ sub start {
                             push @{$kids{$kid}}, $ipblock;
                         }
                         # Evaluate the child chains.  Inline short ones by pushing them back on the subchain.
-                        foreach my $kid (keys %kids) {
+                        foreach my $kid (sort ip4kcmp keys %kids) {
                             if( @{$kids{$kid}} == 1 ) {
                                 push @{$subchains{$subchain}{blocks}}, (@{$kids{$kid}})[0];
                                 $subchains{$subchain}{length}++;
@@ -1733,7 +1753,7 @@ sub start {
                             push @{$kids{$kid}}, $ipblock;
                         }
                         # Evaluate the child chains.  Inline short ones by pushing them back on the subchain.
-                        foreach my $kid (keys %kids) {
+                        foreach my $kid (sort keys %kids) {
                             if( @{$kids{$kid}} == 1 ) {
                                 push @{$subchains{$subchain}{blocks}}, (@{$kids{$kid}})[0];
                                 $subchains{$subchain}{length}++;
@@ -1819,7 +1839,7 @@ sub stop {
 
     print( "Removing blocked countries IP filter" );
 
-    for my $ipv (values %IP) {
+    for my $ipv (sort values %IP) {
         next unless( $ipv->{ENABLED} );
 
         my $fh = startUpdate( $ipv ) or return failure;

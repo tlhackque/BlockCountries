@@ -35,6 +35,10 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.18 Debug determinisim to make comparing logs easier.
+
+V2.17 Add -noprotect & some more debugging improvements.
+
 V2.16 more bcinstall improvements. Only inspect protocol config if enabled.
 
 V2.15 bcinstall improvements. iptables-restore format debug data.
