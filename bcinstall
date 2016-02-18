@@ -226,11 +226,14 @@ EOF
 OK=1
 patha=
 pgma=
-VF=Unknown
+VF="Unknown"
 ip4tables="iptables  iptables-restore  iptables-save"
 ip6tables="ip6tables ip6tables-restore ip6tables-save"
 if [ -z "$IP6" ]; then
     ip6tables=
+fi
+if [ -z "$IP4" ]; then
+    ip4tables=
 fi
 
 for ipt in $ip4tables $ip6tables; do
@@ -241,10 +244,14 @@ for ipt in $ip4tables $ip6tables; do
     else
         path="`which $ipt`"
         path="`dirname $path`"
-        if [[ "$ipt" =~ - ]]; then # tables-(something) don't have --version
-            [ -n "$V" ] && echo "$ipt found in $path"
+        if [[ "$ipt" =~ ip.?tables-save ]]; then # ip*tables-save has no --version, but writes in data
+            checkver `$ipt | perl -e'$_=<>; s/^#\s+Generated\sby\s(\S+)\s+(\S*).*$/$1 $2/; print;'` $IPTV $path
         else
-            checkver `$ipt --version` $IPTV $path
+            if [[ "$ipt" =~ ip.?tables-restore ]]; then # ip*tables-restore doesn't have --version. Can't extract.
+                [ -n "$V" ] && echo "$ipt found in $path"
+            else
+                checkver `$ipt --version` $IPTV $path
+            fi
         fi
         if [ -z "$patha" ]; then
             patha="$path"
@@ -261,11 +268,11 @@ done
 
 echo ""
 if [ -z "$OK" ]; then
-    echo "iptables must be installed or upgraded"
+    echo "iptables must be installed or upgraded.  Minimum version is $IPTV"
     exit 1;
 fi
 
-echo "iptables version $VF installation looks OK"
+[ -z "$IP4$IP6" ] && echo "*** iptables installation not checked ***" || echo "iptables version $VF installation validated"
 
 if [ "$path" != '/sbin' ]; then
     echo ""
