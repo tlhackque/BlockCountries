@@ -72,3 +72,16 @@ If Perl is used by other software on your system, that software may
 depend on specific versions of Perl or Perl library modules.  Although
 BlockCountries should not impose incompatible dependencies, managing
 these is beyond the scope of this document.
+
+iptables
+========
+
+bcinstall also checks for a minimum version of iptables.
+
+BlockCountries requires at least a version that supports the -g [goto]
+action, but there are many bugs in versions later than that.
+
+bcinstall does several checks, but only reports its conclusion.
+
+use -v to see the detail.
+

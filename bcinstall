@@ -1,6 +1,12 @@
 #!/bin/bash
 
-V=
+# Copyright (C) 2016 Timothe Litt litt _at_ acm _ddot_ org
+
+# Minimum version of iptables
+#
+IPTV=1.4.10
+
+export V=
 IP6=1
 IP4=1
 while getopts ":hHFSv" opt; do
@@ -178,9 +184,49 @@ fi
 
 echo ""
 
+function checkver {
+    local PGM="$1"
+    local VER="$2"
+    local REQ="$3"
+    local DIR="$4"
+
+    [ "$VF"="Unknown" ] && VF="$VER"
+    if [ "$VER" != "$VF" ]; then
+        echo "$PGM version $VER doesn't match $VF"
+        OK=
+        return 1;
+    fi
+    perl - <<EOF $PGM $VER $REQ $DIR && return 0
+use warnings;
+use strict;
+
+    my @ver = split( /\./, \$ARGV[1] );
+    \$ver[0] =~ s/^v//;
+    my @req = split( /\./, \$ARGV[2]) ;
+
+    my \$c = 0;
+    while( @ver && @req ) {
+      my \$v = shift @ver;
+      my \$r = shift @req;
+      \$c = \$v <=> \$r;
+      next unless( \$c );
+      last;
+    }
+    if( \$c > 0 || \$c == 0 && @ver >= @req ) {
+      print "\$ARGV[0] version \$ARGV[1] found in \$ARGV[3]\n"if( \$ENV{V} );
+      exit 0;
+    }
+    print "\$ARGV[0] version \$ARGV[1] found in \$ARGV[3], at least version \$ARGV[2] is required\n";
+    exit 1;
+EOF
+    OK=
+    return 1;        
+}
+
 OK=1
 patha=
 pgma=
+VF=Unknown
 ip4tables="iptables  iptables-restore  iptables-save"
 ip6tables="ip6tables ip6tables-restore ip6tables-save"
 if [ -z "$IP6" ]; then
@@ -196,9 +242,9 @@ for ipt in $ip4tables $ip6tables; do
         path="`which $ipt`"
         path="`dirname $path`"
         if [[ "$ipt" =~ - ]]; then # tables-(something) don't have --version
-            echo "$ipt found in $path"
+            [ -n "$V" ] && echo "$ipt found in $path"
         else
-            echo "`$ipt --version` found in $path"
+            checkver `$ipt --version` $IPTV $path
         fi
         if [ -z "$patha" ]; then
             patha="$path"
@@ -213,10 +259,13 @@ for ipt in $ip4tables $ip6tables; do
 
 done
 
+echo ""
 if [ -z "$OK" ]; then
-    echo "iptables must be installed"
+    echo "iptables must be installed or upgraded"
     exit 1;
 fi
+
+echo "iptables version $VF installation looks OK"
 
 if [ "$path" != '/sbin' ]; then
     echo ""
