@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.19 Log iptables version in debug data. Correct IPv6 error in 2.18.
+
 V2.18 Debug determinisim to make comparing logs easier.
 
 V2.17 Add -noprotect & some more debugging improvements.

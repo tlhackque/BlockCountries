@@ -160,6 +160,7 @@ use Storable qw( lock_store lock_retrieve );
 #use Symbol
 use Sys::Syslog;
 use Text::ParseWords;
+#use Text::Wrap;
 
 # Changelog (Also update revision above & README!)
 # 1.0       Initial development
@@ -198,8 +199,10 @@ use Text::ParseWords;
 # 2.17      Some future-proofing for -modules. Add -noprotect for obscure configurations.  Check all close() errors.
 #           Verify that perlcritic's complaints are invalid.
 # 2.18      Minor cleanup & debug determinisim changes.
+# 2.19      Include iptables version in debug configuration.  Reformat some long lines of debug output. Fix 2.18's handling
+#           of IPv6.
 
-my $VERSION = '2.18';
+my $VERSION = '2.19';
 
 # Make perlcritic happy:
 # 1) The special things that IO::Interactive checks for aren't worth another module as they don't apply
@@ -512,14 +515,14 @@ while( (my $arg = shift) ) {
     }
 }
 
-my $argstring = join(' ', map {
+@argv = map { # Quote arguments for unambigous logging
     my $t = $_;
 
     my $qq = $t =~ s/(["\$`\\])/\\$1/g || $t =~ /\s/;
     $qq ||= $t =~ s/([[:^print:]])/'\\c' . chr( ord( 'A' ) - ord( "\cA" ) + ord( $1 ) )/ge;
     $qq? qq("$t") : $t
-                     }
-                     ( $0, ( splice( @argv, 0, @ARGV - $argc ), $cmd, splice( @argv, -$argc ) ) ) );
+            }
+              ( $0, ( splice( @argv, 0, @ARGV - $argc ), $cmd, splice( @argv, -$argc ) ) );
 
 # Analyze a pipe'd handle error return and return a suitable text string
 sub pCloseError {
@@ -543,6 +546,7 @@ sub pCloseError {
 if( $debug ) {
     require POSIX;
     require File::Temp;
+    require Text::Wrap;
 
     $zipavail = eval { require IO::Compress::Zip };
 
@@ -570,8 +574,21 @@ if( $debug ) {
         }
     }
 
-    printf STDERR ( "Version $VERSION invoked on %s\nExecuting %s\n\n",
-                    POSIX::strftime( '%A %e-%b-%Y %T %Z', localtime( time ) ), $argstring );
+    my $label = 'Executing';
+    printf STDERR ( "Version $VERSION invoked on %s\n%s",
+                    POSIX::strftime( '%A %e-%b-%Y %T %Z', localtime( time ) ), $label );
+    my $pos = length $label;
+    $label = ' ' x length( $label );
+
+    foreach my $arg (@argv) {
+        $pos += 1 + length $arg;
+        if( $pos > 80 ) {
+            $pos = length( $label ) + 1 + length $arg;
+            printf STDERR ( "\n%s", $label );
+        }
+        print STDERR ( ' ', $arg );
+    }
+    print STDERR ( "\n\n" ),
 }
 
 if( ($modules || $cmd eq 'needs' || ($debug && !defined $modules)) && seek( DATA, 0, SEEK_SET ) ) {
@@ -616,7 +633,6 @@ if( ($modules || $cmd eq 'needs' || ($debug && !defined $modules)) && seek( DATA
     exit if( $needs );
 }
 
-@argv = ();
 
 sub finish {
     if( $debug ) {
@@ -1323,6 +1339,19 @@ sub ip4kcmp {
     return @a <=> @b;
 }
 
+sub ip6kcmp {
+    my @a = split( /:/, $a );
+    my @b = split( /:/, $b );
+
+    while( @a && @b ) {
+        my $a0 = hex( shift @a );
+        my $b0 = hex( shift @b );
+        my $x = $a0 <=> $b0;
+        return $x if( $x );
+    }
+    return @a <=> @b;
+}
+
 # Start command
 
 sub start {
@@ -1686,7 +1715,7 @@ sub start {
 
             my $kidchains = 0;
             my $inlined = 0;
-            foreach my $subchain (sort ip4kcmp keys %subchains) {
+            foreach my $subchain (sort { $ipv->{VERSION} == 4? ip4kcmp( $a, $b ): ip6kcmp( $a, $b ) } keys %subchains) {
                 if( $subchains{$subchain}{length} == 1 ) {
                     # Inline this subchain, as it is less expensive than the small chain
                     print $fh ( "-A ${NEWCHAIN}-${pchain} -$match " . (@{$subchains{$subchain}{blocks}})[0] . " -j ",
@@ -1716,7 +1745,7 @@ sub start {
                             push @{$kids{$kid}}, $ipblock;
                         }
                         # Evaluate the child chains.  Inline short ones by pushing them back on the subchain.
-                        foreach my $kid (sort ip4kcmp keys %kids) {
+                        foreach my $kid (sort { $ipv->{VERSION} == 4? ip4kcmp( $a, $b ): ip6kcmp( $a, $b ) } keys %kids) {
                             if( @{$kids{$kid}} == 1 ) {
                                 push @{$subchains{$subchain}{blocks}}, (@{$kids{$kid}})[0];
                                 $subchains{$subchain}{length}++;
@@ -1977,20 +2006,47 @@ if( $debug ) {
             print STDERR ( '-' x 80, "\n" );
         }
     }
+
     foreach my $ipv (sort values %IP) {
         next unless( $ipv->{ENABLED} );
 
         printf STDERR ( "\nIPv%s configuration:\n------------------\n", $ipv->{VERSION} );
+
+        my $iw = 0;
+        $iw = length > $iw? length: $iw foreach keys %$ipv;
+
         foreach my $item (sort keys %$ipv) {
             next if( $item eq 'VERSION' );
-            printf STDERR ( "  %-10s: %s", $item,
+            printf STDERR ( "  %-*s: %s", $iw, $item,
                             (defined( $ipv->{$item} )? $ipv->{$item}: 'undef') );
             if( $item =~ /^table_/ ) {
                 if( -r $ipv->{$item} && open( my $f, '<', $ipv->{$item} ) ) {
+                    no warnings 'once';
                     local $/;
                     my %h = map { $_ => 1 } split( /\s+/, <$f> );
-                    print STDERR ( ' => ', join( ', ', sort keys %h ) );
+                    local $Text::Wrap::columns = 80;
+                    local $Text::Wrap::unexpand = 0;
+                    local $Text::Wrap::huge = 'wrap';
+
+                    my $leader = ' ' x (2+$iw+2 + length( (defined( $ipv->{$item} )? $ipv->{$item}: 'undef' ) ) + 4);
+                    my $wrapped = Text::Wrap::wrap( $leader, $leader, join( ', ', sort keys %h ) );
+                    $wrapped =~ s/\A$leader/ => /;
+                    print STDERR ( $wrapped );
                     close( $f ) or ( printf STDERR ( "%s: %s\n", $ipv->{$item}, $! ) );
+                }
+            } elsif( $item eq 'IPT' ) {
+                if( open( my $ipt, '-|', $ipv->{IPT} . " --version 2>&1" ) ) {
+                    {
+                        local $/;
+                        $_ = <$ipt>;
+                    }
+                    if( defined ) {
+                        chomp;
+                        printf STDERR ( " (%s)", $_ );
+                    }
+                    close( $ipt ) or printf STDERR ( "%s: %s", $ipv->{IPT}, pCloseError() );
+                } else {
+                    printf STDERR ( "  %s", $! );
                 }
             }
             print STDERR ( "\n" );
@@ -2027,7 +2083,18 @@ my $rc = eval {
 
     eval {
         openlog( $prog, 'pid', 'daemon' );
-        syslog( "info", $argstring );
+        my $pos = 0;
+        my $line = '';
+        foreach my $arg (@argv) {
+            $pos += ($pos? 1:0) + length $arg;
+            if( $pos > 80 ) {
+                syslog( "info", $line ) if( length $line );
+                $pos = length $arg;
+                $line = '';
+            }
+            $line .= ' ' . $arg;
+        }
+        syslog( "info", $line ) if( length $line );
         closelog;
     } if( $syslog );
 

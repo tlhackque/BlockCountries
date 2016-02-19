@@ -2,7 +2,7 @@
 
 # Copyright (C) 2016 Timothe Litt litt _at_ acm _ddot_ org
 
-BCVERSION="2.95"
+BCVERSION="2.96"
 
 # Minimum version of iptables
 #
@@ -151,6 +151,7 @@ needs Storable               2.30
 needs Symbol                 1.06
 needs Sys::Syslog            0.29
 needs Text::ParseWords       3.27
+needs Text::Wrap             2005.082401
 
 if [ -n "$V" ]; then
     echo
