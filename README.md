@@ -336,9 +336,6 @@ Issues:
  The iptables-restore format is undocumented, though used by others.  It may be
  fragile.
 
- This code should use IPTables::IPv4 - but it doesn't currently work on my x64 system.
- It may be re-written to do so at some point.
-
  --tlhackque 1-Aug-2010, 8-Nov-2010, 3-Oct-2012, 4-Sep-2013, 17-Dec-2015, 5-Feb-2016
 ````
 
@@ -346,6 +343,7 @@ Issues:
 
 Please raise bug reports or suggestions at http://github.com/tlhackque/BlockCountries/issues.
 
-Always include `BlockCountries version` `BlockCOuntries config`, and `perl --version`.
+Always include `BlockCountries version` `BlockCountries config`, and `perl --version`.
+If there is any error or warning message, include the full terminal session.
 
 Suggestions and/or praise are also welcome.
