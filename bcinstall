@@ -2,11 +2,11 @@
 
 # Copyright (C) 2016 Timothe Litt litt _at_ acm _ddot_ org
 
-BCVERSION="2.96"
+BCVERSION="2.97"
 
 # Minimum version of iptables
 #
-IPTV=1.4.10
+IPTV=1.4.7
 
 # Width
 W=25
