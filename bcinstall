@@ -2,10 +2,16 @@
 
 # Copyright (C) 2016 Timothe Litt litt _at_ acm _ddot_ org
 
+BCVERSION="2.95"
+
 # Minimum version of iptables
 #
 IPTV=1.4.10
 
+# Width
+W=25
+
+prog="`basename $0`"
 export V=
 IP6=1
 IP4=1
@@ -22,15 +28,15 @@ while getopts ":hHFSv" opt; do
             ;;
         h|H)
             cat >&2 <<EOF
-Check for software required to run BlockCountries
+Check for software required to run BlockCountries version $BCVERSION
 
 Usage
-    `basename $0` [-h] [-v] [-F] [-S]
+    $prog [-h] [-v] [-F] [-S]
 
 Options
     -h This help
-    -F Do NOT check for IPv4 software
-    -S Do NOT check for IPv6 software
+    -F Do NOT check for IPv4 dependencies
+    -S Do NOT check for IPv6 dependencies
     -v List installed Perl modules that meet minimun version requirements
 
 Output
@@ -56,60 +62,55 @@ NOTE:
 
 exit status
     0 if all checks pass
-    1 if some check(s) fail
+    1 if one or more checks fail
 
 EOF
             exit 0
             ;;
         \?)
             echo "Invalid option: -$OPTARG" >&2
-            echo "Usage: `basename $0` -h for usage" 
+            echo "Usage: $prog -h for usage" 
             exit 1
             ;;
     esac
 done
 
+echo "$prog version $BCVERSION"
+echo ""
+
 if ! which perl > /dev/null 2>&1 ; then
-    echo "You need to install Perl, from your distribution, or see https://www.perl.org"
+    echo "You need to install Perl, either from your distribution or see https://www.perl.org"
+    echo "After installing Perl, run $prog again"
     exit 1
 fi
 
 ppath="`which perl`"
-ppath="`dirname $ppath`"
-echo "Perl version `perl -e'printf \"%vd\", \$^V'` was found in $ppath"
-
-if [ -z "NOTNEEDED" ] ; then
-    if ! which tee > /dev/null 2>&1 ; then
-        echo "You need to install tee (core OS command, part of the GNU coreutils package)"
-        exit 1
-    fi
-
-    tpath="`which tee`"
-    tpath="`dirname $tpath`"
-    echo "`tee --version | head -n 1` was found in $tpath"
-fi
+export ppath="`dirname $ppath`"
+perl -e'printf "Perl version %vd was found in %s\n", $^V, $ENV{ppath}'
 
 function needs {
-    m="$1"
-    v="$2"
+    local m="$1"
+    local v="$2"
+    local VW=8
+
     if perl -M"$m $v" -e'exit;' >/dev/null 2>&1 ; then
         if [ -n "$v" ] && [ -n "$V" ]; then
-            perl -M"$m" -e"print \"  $m version \$$m::VERSION found\n\";exit;"
+            perl -M"$m" -e"printf \"    %-${W}s v%-${VW}s  installed\n\", \"$m\", \$$m::VERSION;exit;"
         fi
     else
         if [ -z "$v" ]; then
-            echo "Perl version $m is required"
+            printf "    %-${W}s v%-${VW}s *OUTDATED      Must upgrade to v$m or higher\n" "Perl" "$m"
             OK=
             NEWPERL="$m"
             return 1
         fi
         if perl -M"$m" -e'exit;' >/dev/null 2>&1 ; then
-            perl -M$m -e"print \"Perl module $m must be upgraded from version \$$m::VERSION to at least version $v\n\";exit;"
+            perl -M$m -e"printf \"    %-${W}s v%-${VW}s *OUTDATED      Must upgrade to v$v or higher\n\", \"$m\", \$$m::VERSION;exit;"
             OK=
             CPAN="$CPAN $m"
             return 1
         fi
-        echo "Perl module $m (minimum version $v) must be installed"
+        printf "    %-${W}s  %-${VW}s *NOT INSTALLED Must install v$v or higher\n" $m ""
         OK=
         CPAN="$CPAN $m"
         return 1
@@ -121,6 +122,8 @@ OK=1
 CPAN=
 NEWPERL=
 
+echo ""
+echo "  Checking Perl module status"
 echo ""
 
 # Update with BlockCountries needs -modules
@@ -159,22 +162,23 @@ else
     echo ""
     if [ -n "$NEWPERL" ]; then
         echo "Perl $NEWPERL must be installed from your distribution, or https://www.perl.org"
-        echo "After upgrading Perl, re-run bcinstall"
+        echo "After upgrading Perl, run $prog again."
         exit 1
     fi
-    echo "If Perl was installed as a package, you should get these modules from your package distribution if possible."
-    echo "For Linux distributions, you would use apt-get, yum install or equivalent"
-    echo "If Perl was installed from source, or your package distribution doesn't have these modules, get them from CPAN."
+    echo "  If Perl was installed as a package, you should get the *modules from your package distribution if possible."
+    echo "  For Linux distributions, you would use apt-get, yum install or equivalent"
+    echo "  If Perl was installed from source, or your package distribution doesn't have these modules, get them from CPAN."
         if [ -n"$CPAN" ]; then
         if which cpan > /dev/null 2>&1 ; then
-            echo "If you need to get them from CPAN, the cpan install command is:"
+            echo "  If you need to get them from CPAN, the cpan install command is:"
+            echo ""
             echo "    cpan install$CPAN"
-            echo "You can also visit https://search.cpan.org to download them manually."
+            echo ""
+            echo "  You can also visit https://search.cpan.org to download them manually."
         else
-            echo "The cpan command is not installed.  Visit https://search.cpan.org to download them manually."
+            echo "  The cpan command is not installed.  Visit https://search.cpan.org to download them manually."
         fi
     fi
-    exit 1;
 fi
 
 if [ "`readlink -f $ppath/perl`" != "`readlink -f /usr/bin/perl`" ]; then
@@ -183,6 +187,11 @@ if [ "`readlink -f $ppath/perl`" != "`readlink -f /usr/bin/perl`" ]; then
 fi
 
 echo ""
+
+W=17
+VW=13
+
+IOK=1
 
 function checkver {
     local PGM="$1"
@@ -193,7 +202,7 @@ function checkver {
     [ "$VF"="Unknown" ] && VF="$VER"
     if [ "$VER" != "$VF" ]; then
         echo "$PGM version $VER doesn't match $VF"
-        OK=
+        IOK=
         return 1;
     fi
     perl - <<EOF $PGM $VER $REQ $DIR && return 0
@@ -213,20 +222,21 @@ use strict;
       last;
     }
     if( \$c > 0 || \$c == 0 && @ver >= @req ) {
-      print "\$ARGV[0] version \$ARGV[1] found in \$ARGV[3]\n"if( \$ENV{V} );
+      printf "  %-${W}s %-${VW}s  in %-*s\n", \$ARGV[0], \$ARGV[1], \$ENV{PW}, \$ARGV[3] if( \$ENV{V} );
       exit 0;
     }
-    print "\$ARGV[0] version \$ARGV[1] found in \$ARGV[3], at least version \$ARGV[2] is required\n";
+    printf "  %-${W}s %-${VW}s  in %-*s  *OUTDATED Must upgrade to v%s or higher\n", \$ARGV[0], \$ARGV[1], \$ENV{PW}, \$ARGV[3], \$ARGV[2];
     exit 1;
 EOF
-    OK=
+    IOK=
     return 1;        
 }
 
-OK=1
+path=
 patha=
 pgma=
 VF="Unknown"
+export PW=20
 ip4tables="iptables  iptables-restore  iptables-save"
 ip6tables="ip6tables ip6tables-restore ip6tables-save"
 if [ -z "$IP6" ]; then
@@ -236,48 +246,50 @@ if [ -z "$IP4" ]; then
     ip4tables=
 fi
 
+[ -n "$IP4$IP6" ] && echo "Checking iptables installation"
+
 for ipt in $ip4tables $ip6tables; do
 
     if ! which $ipt >/dev/null 2>&1 ; then
-        echo "$ipt not found in $PATH"
-        OK=
+        printf "  %-${W}s %-${VW}s    %-${PW}s  *NOT INSTALLED\n" $ipt "" ""
+        IOK=
     else
         path="`which $ipt`"
         path="`dirname $path`"
+        if [ -z "$patha" ]; then
+            patha="$path"
+            PW=${#patha}
+            pgma="$ipt"
+        fi
         if [[ "$ipt" =~ ip.?tables-save ]]; then # ip*tables-save has no --version, but writes in data
             checkver `$ipt | perl -e'$_=<>; s/^#\s+Generated\sby\s(\S+)\s+(\S*).*$/$1 $2/; print;'` $IPTV $path
         else
             if [[ "$ipt" =~ ip.?tables-restore ]]; then # ip*tables-restore doesn't have --version. Can't extract.
-                [ -n "$V" ] && echo "$ipt found in $path"
+                [ -n "$V" ] && printf "  %-${W}s %-${VW}s  in %-${PW}s\n" $ipt "" $path
             else
                 checkver `$ipt --version` $IPTV $path
             fi
         fi
-        if [ -z "$patha" ]; then
-            patha="$path"
-            pgma="$ipt"
-        else
-            if [ "$path" != "$patha" ]; then
-                echo "$ipt must be in the same directory ($patha) as $pgma"
-                OK=
-            fi
+        if [ "$path" != "$patha" ]; then
+            echo "$ipt must be in the same directory ($patha) as $pgma"
+            IOK=
         fi
     fi
-
 done
 
 echo ""
-if [ -z "$OK" ]; then
+if [ -z "$IOK" ]; then
     echo "iptables must be installed or upgraded.  Minimum version is $IPTV"
-    exit 1;
 fi
 
-[ -z "$IP4$IP6" ] && echo "*** iptables installation not checked ***" || echo "iptables version $VF installation validated"
+[ -z "$IP4$IP6" ] && echo "*** iptables installation not checked ***" || ( [ -n "$IOK" ] && echo "iptables version $VF installation validated" )
 
-if [ "$path" != '/sbin' ]; then
+if [ -n "$patha" ] && [ "$patha" != '/sbin' ]; then
     echo ""
-    echo "Be sure to include \"-path $path\" in your configuration file"
+    echo "*** Be sure to include \"-path $patha\" in your configuration file"
 fi
+
+[ -z "$IOK" ] && OK=
 
 # Extract config search list from BlockCountries & report
 
@@ -300,23 +312,23 @@ my \$maxd = 0;
 my \$maxf = 0;
 \$maxf = ((length basename \$_) > \$maxf? length basename \$_ : \$maxf) foreach( 'x/File', @CFGFILE );
 \$maxf = length( \$ENV{BlockCountriesCFG} ) if( defined \$ENV{BlockCountriesCFG} && length( \$ENV{BlockCountriesCFG} ) > \$maxf );
-print ("\nConfiguration file search list:\n");
+print ("\n  Configuration file search list:\n");
 
-printf( "  %-*s %-*s Status\n", \$maxd, "Directory", \$maxf, "File" ); 
-printf( "  %-*s %-*s %s\n", \$maxd, '\$ENV{BlockCountriesCFG}', \$maxf, (\$ENV{BlockCountriesCFG} || ''),
+printf( "    %-*s %-*s Status\n", \$maxd, "Directory", \$maxf, "File" ); 
+printf( "    %-*s %-*s %s\n", \$maxd, '\$ENV{BlockCountriesCFG}', \$maxf, (\$ENV{BlockCountriesCFG} || ''),
          (\$ENV{BlockCountriesCFG} && -f \$ENV{BlockCountriesCFG})? '[Exists]':
                 (\$ENV{BlockCountriesCFG} && -d dirname( \$ENV{BlockCountriesCFG} )? '[Directory exists]':'[Not present]' ) );
 
 foreach my \$file (@CFGFILE) {
     my \$dir = dirname \$file;
     my \$rt = '';
-    printf("  %-*s ", \$maxd, \$dir );
+    printf("    %-*s ", \$maxd, \$dir );
     if( \$dir =~ /^[.]/ ) {
         printf( "%-*s [Not checked, runtime value unknown]\n", \$maxf, '' );
         next;
     }
     if( \$dir =~ /^[~]/ ) {
-        \$dir = \$ENV{HOME} || (getpwuid(\$<))[7];
+        \$dir =~ s,^[~],\$ENV{HOME} || (getpwuid(\$<))[7],e;
         \$file = "\$dir/" . basename \$file;
         \$rt = ", assuming runtime \$dir"
 
@@ -329,7 +341,7 @@ foreach my \$file (@CFGFILE) {
         printf( "%-*s [Not present\$rt]\n", \$maxf, '' );
     }
 }
-print( "\nThe first file found will be used at runtime.\nUse BlockCountries config to determine which file is selected.\n" );
+print( "\n  The first file found will be used at runtime.\n  Use BlockCountries config to determine which file is selected.\n" );
 exit;
 EOF
 else
@@ -337,6 +349,10 @@ else
 fi
 
 echo ""
-echo "All checks completed successfully"
+if [ -n "$OK" ]; then
+    echo "All checks completed successfully by $prog v$BCVERSION"
 
-exit 0
+    exit 0
+fi
+echo "*** $prog: BlockCountries requirements v$BCVERSION are **not** satisfied"
+exit 1
