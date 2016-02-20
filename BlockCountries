@@ -683,7 +683,7 @@ $SIG{__DIE__} = sub {
     exit 255;
 };
 
-my( $ifcfgDone, $unameDone );
+my( $ifcfgDone, $unameDone, $lsDone );
 
 if( !defined $ipv4 && !defined $ipv6 ) {
     $ipv4 = 1;
@@ -1182,6 +1182,41 @@ sub startUpdate {
                 }
             }
         }
+
+        unless( $lsDone ) {
+            $lsDone = 1;
+
+            $fh->log( "\nZone data directory %s\n--------------------%s\n", $ZONEDIR, '-' x length( $ZONEDIR ) );
+            my $lscmd = "ls -ld $ZONEDIR && ls -l $ZONEDIR";
+
+            if( open( my $ls, '-|', "2>&1 $lscmd" ) ) {
+                while( <$ls> ) {
+                    $fh->log( "%s", $_ );
+                }
+                close( $ls ) or $fh->log( "%s: %s\n", "$lscmd" , pCloseError() );
+            } else {
+                $fh->log( "Unable to run $lscmd: $!\n" );
+            }
+            $fh->log( "\n" );
+            if( open( my $cc, '<', "$ZONEDIR/cclist.txt" ) ) {
+                {
+                    local $/;
+                    $_ = <$cc>;
+                }
+                s/\n/ /g;
+
+                local $Text::Wrap::columns = 80;
+                local $Text::Wrap::unexpand = 0;
+                local $Text::Wrap::huge = 'wrap';
+
+                my $label = 'cclist.txt: ';
+                $fh->log( "%s\n", Text::Wrap::wrap( $label, ' ' x length( $label ), $_ ) );
+                close( $cc ) or $fh->log( "%s: %s\n", "$ZONEDIR/cclist.txt", $! );
+            } else {
+                $fh->log( "%s: %s\n", "$ZONEDIR/cclist.txt", $! );
+            }
+        }
+        $fh->log( "\n" );
 
         $fh->log( "\nCurrent IPv%u rules\n------------------\n\n", $ipv->{VERSION} );
         open( my $ipt, '-|', $ipv->{IPT} . " -n -L 2>&1" ) or
@@ -2021,7 +2056,6 @@ if( $debug ) {
                             (defined( $ipv->{$item} )? $ipv->{$item}: 'undef') );
             if( $item =~ /^table_/ ) {
                 if( -r $ipv->{$item} && open( my $f, '<', $ipv->{$item} ) ) {
-                    no warnings 'once';
                     local $/;
                     my %h = map { $_ => 1 } split( /\s+/, <$f> );
                     local $Text::Wrap::columns = 80;
