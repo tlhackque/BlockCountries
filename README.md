@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.21 Provide additional detail when unable to get data from RIR
+
 V2.20 Include zone data summary in debug log.
 
 V2.19 Log iptables version in debug data. Correct IPv6 error in 2.18.

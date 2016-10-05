@@ -201,8 +201,10 @@ use Text::ParseWords;
 # 2.18      Minor cleanup & debug determinisim changes.
 # 2.19      Include iptables version in debug configuration.  Reformat some long lines of debug output. Fix 2.18's handling
 #           of IPv6.
+# 2.20      Include information on the zone data in debug log.
+# 2.21      Provide additional detail when unable to get data from RIR
 
-my $VERSION = '2.19';
+my $VERSION = '2.21';
 
 # Make perlcritic happy:
 # 1) The special things that IO::Interactive checks for aren't worth another module as they don't apply
@@ -1419,11 +1421,18 @@ sub start {
 
         next unless( $update || ! -f $db || -z $db );
 
-        require LWP::Simple;
-        LWP::Simple->import;
+        require HTTP::Status;
+        HTTP::Status->import;
+
+        require LWP::UserAgent;
+
+        my $ua = LWP::UserAgent->new;
+        $ua->agent( "$prog/$VERSION" );
+        $ua->env_proxy;
 
         print( "\nChecking $rir for new data" ) if( $debug );
-        my $rc = mirror( $RIRS{$rir}, $db );
+        my $response = $ua->mirror( $RIRS{$rir}, $db );
+        my $rc = $response->code;
         if( is_success( $rc ) ) {
 
             print( "\nUpdated IP zone data from $rir" ) if( $debug || $update || $ENV{CRONJOB} );
@@ -1438,7 +1447,8 @@ sub start {
             if( $rc == RC_NOT_MODIFIED() ) { # Can only happen if file exists
                 print( "\nNo new IP data available from $rir " ) if( $debug || ($update && !$ENV{CRONJOB}) );
             } else {
-                print( "\nUnable to fetch IP zone data from $rir: $rc - ", status_message($rc), " " );
+                print( "\nUnable to fetch IP zone data from $rir: $rc - ", $response->message, " " );
+                print( "\n - Attempted: $RIRS{$rir} " );
             }
             next;
         }
