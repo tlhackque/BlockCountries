@@ -161,7 +161,7 @@ stable; updating more than once a week is rarely productive.
 
 Run
 ````
-BlockCountries -start -update
+BlockCountries start -update
 ````
 
 The filter should download the latest IP country assignments and be in place.
