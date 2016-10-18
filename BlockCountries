@@ -203,8 +203,9 @@ use Text::ParseWords;
 #           of IPv6.
 # 2.20      Include information on the zone data in debug log.
 # 2.21      Provide additional detail when unable to get data from RIR
+# 2.22      Corect script permissions
 
-my $VERSION = '2.21';
+my $VERSION = '2.22';
 
 # Make perlcritic happy:
 # 1) The special things that IO::Interactive checks for aren't worth another module as they don't apply

@@ -35,6 +35,8 @@ It is a Perl script.
 
 #Latest updates:
 
+V2.22 Correct script permissions in git
+
 V2.21 Provide additional detail when unable to get data from RIR
 
 V2.20 Include zone data summary in debug log.
